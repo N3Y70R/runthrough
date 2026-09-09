@@ -85,6 +85,11 @@ type InfraReport struct {
 	Address   string `json:"address,omitempty"`
 	Reachable bool   `json:"reachable"`
 	Checked   bool   `json:"checked"`
+	// Protocol is what was spoken to confirm it, empty when only the socket
+	// could be checked. Spoke separates "answered its own protocol" from
+	// "accepted a connection".
+	Protocol string `json:"protocol,omitempty"`
+	Spoke    bool   `json:"spoke,omitempty"`
 }
 
 // PortReport is one host port the ecosystem intends to publish.
@@ -258,12 +263,26 @@ func checkInfra(r *report.Result, cat *catalog.Catalog, profile map[string]strin
 			}
 			rep.Checked = true
 			rep.Address = fmt.Sprintf("127.0.0.1:%d", port)
-			if err := probe.Reachable("127.0.0.1", port); err != nil {
+			reach := probe.Check(component, "127.0.0.1", port)
+			rep.Reachable = reach.Open && (reach.Spoke || reach.Protocol == "")
+			rep.Protocol = reach.Protocol
+			rep.Spoke = reach.Spoke
+			switch {
+			case !reach.Open:
 				r.Fix("IN-001", report.Error, component,
 					fmt.Sprintf("nothing is listening on %s, but the %q profile expects it on this machine", rep.Address, profileName),
 					report.Remediation{Text: "start it on your machine, or switch to a profile that runs it in a container (--infra local)", Fixable: false})
-			} else {
-				rep.Reachable = true
+			case reach.Protocol != "" && !reach.Spoke:
+				// Something answered the socket but not the protocol: a
+				// stale tunnel, a dead port-forward, or a database still
+				// starting. Calling that "reachable" is the mistake this
+				// check exists to avoid.
+				r.Fix("IN-003", report.Error, component,
+					fmt.Sprintf("something is listening on %s but it does not speak %s: %s", rep.Address, reach.Protocol, reach.Detail),
+					report.Remediation{Text: "check what is bound to that port — a forwarded port left open, or the service still starting", Fixable: false})
+			case reach.Protocol == "":
+				r.Addf("IN-004", report.Warning, component,
+					"%s accepts connections, but this build knows no handshake for %q: only the socket was verified", rep.Address, component)
 			}
 		case "container":
 			// The stack starts it; nothing to verify beforehand.
@@ -519,8 +538,12 @@ func (d *Data) WriteHuman(w io.Writer) error {
 		for _, i := range d.Infras {
 			state := "not checked"
 			switch {
+			case i.Checked && i.Spoke:
+				state = "speaking " + i.Protocol + " at " + i.Address
 			case i.Checked && i.Reachable:
-				state = "answering at " + i.Address
+				state = "socket open at " + i.Address + " (protocol not verified)"
+			case i.Checked && i.Protocol != "":
+				state = "NOT speaking " + i.Protocol + " at " + i.Address
 			case i.Checked:
 				state = "NOT answering at " + i.Address
 			case i.Mode == "container":

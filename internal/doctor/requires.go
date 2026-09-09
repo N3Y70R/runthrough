@@ -17,11 +17,15 @@ import (
 // RequirementReport is one declared requirement and where it was satisfied.
 // Only presence is ever recorded — never a value, not even truncated.
 type RequirementReport struct {
-	Kind    string `json:"kind"` // env or file
-	Name    string `json:"name"`
-	Scope   string `json:"scope"`
-	Present bool   `json:"present"`
-	Source  string `json:"source,omitempty"`
+	Kind  string `json:"kind"` // env or file
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+	// AppliesTo names the services a catalog-level requirement belongs to.
+	// Without it, "scope: catalog" on a requirement that no longer applies
+	// to the whole catalog cannot be explained without opening the yaml.
+	AppliesTo []string `json:"applies_to,omitempty"`
+	Present   bool     `json:"present"`
+	Source    string   `json:"source,omitempty"`
 }
 
 // envSource says where a variable is defined, without reading its value.
@@ -82,7 +86,8 @@ func checkRequires(r *report.Result, src envSource, scope string, req catalog.Re
 		}
 		source := src.find(e.Name)
 		data.Requirements = append(data.Requirements, RequirementReport{
-			Kind: "env", Name: e.Name, Scope: scope, Present: source != "", Source: source,
+			Kind: "env", Name: e.Name, Scope: scope, AppliesTo: e.Services,
+			Present: source != "", Source: source,
 		})
 		if source != "" {
 			continue
@@ -118,7 +123,7 @@ func checkRequires(r *report.Result, src envSource, scope string, req catalog.Re
 		_, err := os.Stat(path)
 		present := err == nil
 		data.Requirements = append(data.Requirements, RequirementReport{
-			Kind: "file", Name: path, Scope: scope, Present: present,
+			Kind: "file", Name: path, Scope: scope, AppliesTo: f.Services, Present: present,
 		})
 		if present {
 			continue
