@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/N3Y70R/runthrough/internal/artifact"
 	"github.com/N3Y70R/runthrough/internal/catalog"
 	"github.com/N3Y70R/runthrough/internal/probe"
 	"github.com/N3Y70R/runthrough/internal/runner"
@@ -55,6 +56,9 @@ type Plan struct {
 	Services  []Service         `json:"services"`
 	Env       map[string]string `json:"env"`
 	EnvFile   string            `json:"env_file,omitempty"`
+	// Artifact is what the driver file says about itself. The catalog
+	// declares intent; the artifact decides what actually runs.
+	Artifact *artifact.Contract `json:"-"`
 }
 
 // Options are the inputs that vary between runs.
@@ -105,6 +109,10 @@ func Build(ctx context.Context, cat *catalog.Catalog, o Options) (*Plan, error) 
 		Dir:       cat.Dir,
 		Infra:     infra,
 		Env:       map[string]string{},
+	}
+
+	if contract, err := artifact.Read(p.File); err == nil {
+		p.Artifact = contract
 	}
 
 	p.Env["RT_PROJECT"] = p.Project
@@ -196,6 +204,20 @@ func Build(ctx context.Context, cat *catalog.Catalog, o Options) (*Plan, error) 
 	return p, nil
 }
 
+// RemoveEnvFile deletes the generated env-file. It holds whatever the
+// catalog's .env held, so it should not outlive the stack it was written for.
+func (p *Plan) RemoveEnvFile() error {
+	path := p.EnvFile
+	if path == "" {
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			dir = os.TempDir()
+		}
+		path = filepath.Join(dir, "runthrough", p.Project+".env")
+	}
+	return os.Remove(path)
+}
+
 // Invocation hands the plan to a driver.
 func (p *Plan) Invocation() runner.Invocation {
 	return runner.Invocation{Project: p.Project, File: p.File, Dir: p.Dir, Env: p.Env, EnvFile: p.EnvFile}
@@ -260,23 +282,41 @@ func (p *Plan) WaitTargets(only []string) []probe.Target {
 		if len(only) > 0 && !containsString(only, s.Name) {
 			continue
 		}
-		t := probe.Target{Service: s.Name, Kind: s.Health}
+		t := probe.Target{Service: s.Name}
+
+		declared, _ := p.artifactService(s.Name)
 		switch {
+		case declared.Healthcheck:
+			// The runtime's own healthcheck runs inside the container, so
+			// it cannot be satisfied by a port the runtime opened first.
+			t.Kind = probe.KindContainer
 		case s.HostPort == 0:
 			t.Skip = "no published port: not reachable from this machine"
 		case s.Health == "http":
+			t.Kind = probe.KindHTTP
 			path := s.Path
 			if path == "" {
 				path = "/"
 			}
 			t.URL = fmt.Sprintf("http://localhost:%d%s", s.HostPort, path)
 		default:
-			t.Kind = "tcp"
-			t.Address = fmt.Sprintf("localhost:%d", s.HostPort)
+			// A TCP connect against a published port always succeeds: the
+			// runtime answers it before the service does. Reporting that as
+			// ready would be a false promise, which is worse than no
+			// promise at all.
+			t.Kind = probe.KindUnverifiable
+			t.Reason = fmt.Sprintf("a tcp probe against published port %d proves nothing: the runtime answers it before the service does. Declare health.type http, or a healthcheck in the artifact", s.HostPort)
 		}
 		out = append(out, t)
 	}
 	return out
+}
+
+func (p *Plan) artifactService(name string) (artifact.Service, bool) {
+	if p.Artifact == nil {
+		return artifact.Service{}, false
+	}
+	return p.Artifact.Service(name)
 }
 
 // Names lists every service in the plan.
@@ -290,9 +330,20 @@ func (p *Plan) Names() []string {
 
 // Buildable splits names into those that build from source and those that
 // only pull an image.
+// Buildable splits names by what the ARTIFACT declares, not by what the
+// catalog intends: a service the catalog describes as source may still run a
+// ready-made image, and only the artifact knows.
 func (p *Plan) Buildable(names []string) (build, imageOnly []string) {
 	for _, s := range p.Services {
 		if len(names) > 0 && !containsString(names, s.Name) {
+			continue
+		}
+		if declared, ok := p.artifactService(s.Name); ok {
+			if declared.Builds {
+				build = append(build, s.Name)
+			} else {
+				imageOnly = append(imageOnly, s.Name)
+			}
 			continue
 		}
 		if s.Image != "" {

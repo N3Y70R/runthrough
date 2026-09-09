@@ -20,17 +20,43 @@ import (
 	"time"
 )
 
+// Kinds of readiness signal, in descending order of trust.
+const (
+	// KindContainer polls the runtime's own healthcheck, which runs inside
+	// the container. It is the only signal that cannot be faked by the
+	// runtime publishing a port before the process is listening.
+	KindContainer = "container"
+	// KindHTTP asks the service for an answer. Trustworthy: something has
+	// to serve the response.
+	KindHTTP = "http"
+	// KindUnverifiable is a service whose readiness cannot be established
+	// from the host. Reported as such, never as ready.
+	KindUnverifiable = "unverifiable"
+)
+
 // Target is one thing to wait for.
 type Target struct {
 	Service string
-	Kind    string // http, tcp, or none
+	Kind    string
 	URL     string
 	Address string
 	// Skip explains why this service cannot be probed from the host, which
 	// is not a failure — a service with no published port is simply out of
 	// reach from here.
 	Skip string
+	// Reason explains an unverifiable target: what would have to change for
+	// its readiness to become knowable.
+	Reason string
 }
+
+// State is what the runtime reports about a container.
+type State struct {
+	Running bool
+	Health  string // healthy, unhealthy, starting, or empty
+}
+
+// StatusFunc asks the runtime for the state of every service.
+type StatusFunc func(context.Context) (map[string]State, error)
 
 // Result is what waiting found.
 type Result struct {
@@ -39,20 +65,24 @@ type Result struct {
 	Target  string `json:"target,omitempty"`
 	Ready   bool   `json:"ready"`
 	Skipped bool   `json:"skipped,omitempty"`
-	Seconds int    `json:"seconds,omitempty"`
-	Detail  string `json:"detail,omitempty"`
+	// Unverifiable marks a service whose readiness could not be established.
+	// It is deliberately distinct from both ready and not ready: claiming
+	// either would be a guess.
+	Unverifiable bool   `json:"unverifiable,omitempty"`
+	Seconds      int    `json:"seconds,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 // Wait polls every target until it answers or the deadline passes. Targets
 // are polled concurrently, so the total wait is the slowest one, not the sum.
-func Wait(ctx context.Context, targets []Target, timeout time.Duration) []Result {
+func Wait(ctx context.Context, targets []Target, timeout time.Duration, status StatusFunc) []Result {
 	results := make([]Result, len(targets))
 	done := make(chan struct{}, len(targets))
 
 	for i, t := range targets {
 		go func(i int, t Target) {
 			defer func() { done <- struct{}{} }()
-			results[i] = waitOne(ctx, t, timeout)
+			results[i] = waitOne(ctx, t, timeout, status)
 		}(i, t)
 	}
 	for range targets {
@@ -61,15 +91,22 @@ func Wait(ctx context.Context, targets []Target, timeout time.Duration) []Result
 	return results
 }
 
-func waitOne(ctx context.Context, t Target, timeout time.Duration) Result {
+func waitOne(ctx context.Context, t Target, timeout time.Duration, status StatusFunc) Result {
 	r := Result{Service: t.Service, Kind: t.Kind}
 	if t.Skip != "" {
 		r.Skipped = true
 		r.Detail = t.Skip
 		return r
 	}
+	if t.Kind == KindUnverifiable {
+		// Saying "ready" here would be a lie, and saying "not ready" would
+		// be a different lie. The honest answer is that nothing was proven.
+		r.Unverifiable = true
+		r.Detail = t.Reason
+		return r
+	}
 	r.Target = t.Address
-	if t.Kind == "http" {
+	if t.Kind == KindHTTP {
 		r.Target = t.URL
 	}
 
@@ -79,8 +116,10 @@ func waitOne(ctx context.Context, t Target, timeout time.Duration) Result {
 	for {
 		var err error
 		switch t.Kind {
-		case "http":
+		case KindHTTP:
 			err = getOK(ctx, t.URL)
+		case KindContainer:
+			err = containerHealthy(ctx, t.Service, status)
 		default:
 			err = dial(t.Address)
 		}
@@ -101,6 +140,31 @@ func waitOne(ctx context.Context, t Target, timeout time.Duration) Result {
 			return r
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// containerHealthy consults the runtime's own healthcheck.
+func containerHealthy(ctx context.Context, service string, status StatusFunc) error {
+	if status == nil {
+		return fmt.Errorf("no way to ask the runtime for container health")
+	}
+	states, err := status(ctx)
+	if err != nil {
+		return err
+	}
+	state, ok := states[service]
+	if !ok {
+		return fmt.Errorf("the runtime does not report this service yet")
+	}
+	switch state.Health {
+	case "healthy":
+		return nil
+	case "unhealthy":
+		return fmt.Errorf("the container reports itself unhealthy")
+	case "":
+		return fmt.Errorf("the container declares no healthcheck")
+	default:
+		return fmt.Errorf("the container is %s", state.Health)
 	}
 }
 

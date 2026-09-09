@@ -43,11 +43,33 @@ type EnvFileRef struct {
 	Required bool   `json:"required"`
 }
 
+// Service is what the artifact says about one service. It is the authority
+// on this: the catalog describes intent, the artifact describes what will
+// actually run.
+type Service struct {
+	Name string `json:"name"`
+	// Builds is true when the service has a build section. A service that
+	// only pulls an image cannot be rebuilt, whatever the catalog says.
+	Builds bool `json:"builds"`
+	// Healthcheck is true when the artifact defines one, which is the only
+	// trustworthy signal that a service is actually up.
+	Healthcheck bool `json:"healthcheck"`
+	// Mounts are the host paths bind-mounted into the service.
+	Mounts []string `json:"mounts,omitempty"`
+}
+
 // Contract is what the artifact needs in order to run at all.
 type Contract struct {
-	Path      string       `json:"path"`
-	Variables []Variable   `json:"variables"`
-	EnvFiles  []EnvFileRef `json:"env_files"`
+	Path      string             `json:"path"`
+	Variables []Variable         `json:"variables"`
+	EnvFiles  []EnvFileRef       `json:"env_files"`
+	Services  map[string]Service `json:"services,omitempty"`
+}
+
+// Service returns what the artifact says about a service.
+func (c *Contract) Service(name string) (Service, bool) {
+	s, ok := c.Services[name]
+	return s, ok
 }
 
 // ${NAME}, ${NAME:-default}, ${NAME-default}, ${NAME:?message}, ${NAME?message}
@@ -65,13 +87,14 @@ func Read(path string) (*Contract, error) {
 	c := &Contract{Path: path}
 	c.Variables = variables(string(data))
 
-	files, err := envFiles(data)
+	files, services, err := structure(data)
 	if err != nil {
 		// A file we cannot parse still yields its variables, which is the
 		// more valuable half; the caller decides what to do with the error.
 		return c, err
 	}
 	c.EnvFiles = files
+	c.Services = services
 	return c, nil
 }
 
@@ -115,19 +138,23 @@ func variables(text string) []Variable {
 	return out
 }
 
-// envFiles extracts the env_file declarations, in every shape Compose
-// accepts: a string, a list of strings, or a list of {path, required}.
-func envFiles(data []byte) ([]EnvFileRef, error) {
+// structure extracts what the artifact declares per service: env files, a
+// build section, a healthcheck, and bind-mounted host paths.
+func structure(data []byte) ([]EnvFileRef, map[string]Service, error) {
 	var doc struct {
 		Services map[string]struct {
-			EnvFile yaml.Node `yaml:"env_file"`
+			EnvFile     yaml.Node `yaml:"env_file"`
+			Build       yaml.Node `yaml:"build"`
+			Healthcheck yaml.Node `yaml:"healthcheck"`
+			Volumes     []string  `yaml:"volumes"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("reading the artifact: %w", err)
+		return nil, nil, fmt.Errorf("reading the artifact: %w", err)
 	}
 
-	var out []EnvFileRef
+	var refs []EnvFileRef
+	services := map[string]Service{}
 	names := make([]string, 0, len(doc.Services))
 	for name := range doc.Services {
 		names = append(names, name)
@@ -135,10 +162,34 @@ func envFiles(data []byte) ([]EnvFileRef, error) {
 	sort.Strings(names)
 
 	for _, name := range names {
-		node := doc.Services[name].EnvFile
-		out = append(out, refsFrom(name, &node)...)
+		node := doc.Services[name]
+		refs = append(refs, refsFrom(name, &node.EnvFile)...)
+		services[name] = Service{
+			Name:        name,
+			Builds:      node.Build.Kind != 0,
+			Healthcheck: node.Healthcheck.Kind != 0,
+			Mounts:      hostMounts(node.Volumes),
+		}
 	}
-	return out, nil
+	return refs, services, nil
+}
+
+// hostMounts keeps the bind mounts — the ones whose source is a path — and
+// drops named volumes, which Docker creates on demand.
+func hostMounts(volumes []string) []string {
+	var out []string
+	for _, v := range volumes {
+		source, _, ok := strings.Cut(v, ":")
+		if !ok || source == "" {
+			continue
+		}
+		if strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") ||
+			strings.HasPrefix(source, "/") || strings.HasPrefix(source, "~") ||
+			strings.HasPrefix(source, "$") {
+			out = append(out, source)
+		}
+	}
+	return out
 }
 
 func refsFrom(service string, node *yaml.Node) []EnvFileRef {

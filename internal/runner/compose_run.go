@@ -29,6 +29,11 @@ func (c *Compose) Down(ctx context.Context, inv Invocation, opts DownOptions, st
 	return c.run(ctx, inv, args, stdout, stderr)
 }
 
+// Stop stops named services without touching the rest of the stack.
+func (c *Compose) Stop(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error {
+	return c.run(ctx, inv, append([]string{"stop"}, services...), stdout, stderr)
+}
+
 // Build rebuilds images without starting anything.
 func (c *Compose) Build(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error {
 	return c.run(ctx, inv, append([]string{"build"}, services...), stdout, stderr)

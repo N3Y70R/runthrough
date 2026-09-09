@@ -93,6 +93,8 @@ type Driver interface {
 	Probe(ctx context.Context) Info
 	Up(ctx context.Context, inv Invocation, opts UpOptions, stdout, stderr io.Writer) error
 	Down(ctx context.Context, inv Invocation, opts DownOptions, stdout, stderr io.Writer) error
+	Stop(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error
+	Status(ctx context.Context, inv Invocation) (map[string]ServiceState, error)
 	Build(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error
 	Logs(ctx context.Context, inv Invocation, services []string, follow bool, stdout, stderr io.Writer) error
 }
