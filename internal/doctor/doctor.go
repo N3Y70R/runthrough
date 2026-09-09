@@ -113,6 +113,9 @@ func checkRuntime(r *report.Result, info runner.Info) {
 
 func checkService(ctx context.Context, r *report.Result, cat *catalog.Catalog, eco *catalog.Ecosystem, svc *catalog.Service) ServiceReport {
 	scope := eco.Name + "/" + svc.Name
+	if svc.Image != "" {
+		return ServiceReport{Ecosystem: eco.Name, Service: svc.Name, Worktree: "-"}
+	}
 	want := eco.WorktreeOf(svc)
 	loc := worktree.Resolve(ctx, eco.Workspace, svc.Repo, want)
 

@@ -79,9 +79,9 @@ func (c *Catalog) validateEcosystem(f *findings, eco *Ecosystem, infra map[strin
 				f.warnf("CAT-010", scope, "host port %d falls outside the ecosystem range %d-%d", svc.Port.Host, eco.PortRange[0], eco.PortRange[1])
 			}
 		}
-		if svc.Runtime == "" {
-			f.errorf("CAT-011", scope, "no runtime declared")
-		} else if !oneOf(svc.Runtime, KnownRuntimes) {
+		if svc.Runtime == "" && svc.Image == "" {
+			f.errorf("CAT-011", scope, "no runtime declared: a service either builds from code or names an image")
+		} else if svc.Runtime != "" && !oneOf(svc.Runtime, KnownRuntimes) {
 			f.warnf("CAT-012", scope, "runtime %q is not one this build knows about", svc.Runtime)
 		}
 

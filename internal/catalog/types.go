@@ -55,7 +55,11 @@ type Gateway struct {
 
 // Service is one runnable unit, of any runtime (D-6).
 type Service struct {
-	Name        string            `yaml:"-"`
+	Name string `yaml:"-"`
+	// Image marks a service that has no code of its own — a proxy, a
+	// database, a ready-made image. It is built from nothing and has no
+	// worktree, so the checks that look for code skip it.
+	Image       string            `yaml:"image"`
 	Repo        string            `yaml:"repo"`
 	Runtime     string            `yaml:"runtime"`
 	Worktree    string            `yaml:"worktree"`
@@ -102,6 +106,10 @@ type LocalFile struct {
 
 // Infra holds the switchable infrastructure profiles (I-01, I-02).
 type Infra struct {
+	// Default is the profile used when a command does not name one. A
+	// catalog whose services expect the machine's own Postgres should not
+	// need everyone to remember a flag.
+	Default  string                       `yaml:"default"`
 	Profiles map[string]map[string]string `yaml:"profiles"`
 }
 

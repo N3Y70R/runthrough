@@ -40,6 +40,36 @@ func commands() []command {
 			run:     runConfig,
 		},
 		{
+			name:    "up",
+			summary: "bring the ecosystem up",
+			usage:   "runthrough up [SERVICE...] [--eco NAME] [--infra PROFILE] [--set svc=branch] [--build]",
+			run:     runUp,
+		},
+		{
+			name:    "down",
+			summary: "stop the ecosystem, keeping its data",
+			usage:   "runthrough down [--eco NAME] [--volumes]",
+			run:     runDown,
+		},
+		{
+			name:    "rebuild",
+			summary: "rebuild one or more services",
+			usage:   "runthrough rebuild [SERVICE...] [--eco NAME]",
+			run:     runRebuild,
+		},
+		{
+			name:    "logs",
+			summary: "read service output",
+			usage:   "runthrough logs [SERVICE...] [-f] [--eco NAME]",
+			run:     runLogs,
+		},
+		{
+			name:    "plan",
+			summary: "show what would run, and the command that would do it",
+			usage:   "runthrough plan [--eco NAME] [--infra PROFILE] [--set svc=branch]",
+			run:     runPlan,
+		},
+		{
 			name:    "doctor",
 			summary: "check whether this machine can run the stack",
 			usage:   "runthrough doctor [--eco NAME] [--catalog PATH] [--json]",

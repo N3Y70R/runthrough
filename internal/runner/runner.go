@@ -9,7 +9,10 @@
 // driver silently lacked something is the worst failure mode there is.
 package runner
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // Capability is something a catalog may rely on and a driver may lack.
 type Capability string
@@ -51,9 +54,42 @@ type Info struct {
 // Supports reports whether the probed runtime offers a capability.
 func (i Info) Supports(c Capability) bool { return i.Capabilities[string(c)] }
 
-// Driver is a container runtime this tool can drive. Phase 0 only probes;
-// bringing services up arrives with phase 1.
+// Invocation is everything a driver needs to act on one ecosystem. It is
+// deliberately runtime-neutral in spirit: a driver that is not Compose reads
+// the same fields and does whatever its runtime requires.
+type Invocation struct {
+	// Project namespaces the running stack, so two ecosystems can run side
+	// by side without colliding (N-03).
+	Project string
+	// File is the driver artifact: readable and runnable by hand, which is
+	// the escape hatch (principle 3).
+	File string
+	// Dir is what relative paths inside that artifact resolve against.
+	Dir string
+	// Env carries the resolved plan: worktree paths, ports, infrastructure
+	// endpoints and provenance labels.
+	Env map[string]string
+}
+
+// UpOptions tunes bringing services up.
+type UpOptions struct {
+	Services []string
+	Build    bool
+}
+
+// DownOptions tunes taking them down. Data is kept unless explicitly dropped:
+// deleting someone's local database must be something they asked for.
+type DownOptions struct {
+	Services []string
+	Volumes  bool
+}
+
+// Driver is a container runtime this tool can drive.
 type Driver interface {
 	Name() string
 	Probe(ctx context.Context) Info
+	Up(ctx context.Context, inv Invocation, opts UpOptions, stdout, stderr io.Writer) error
+	Down(ctx context.Context, inv Invocation, opts DownOptions, stdout, stderr io.Writer) error
+	Build(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error
+	Logs(ctx context.Context, inv Invocation, services []string, follow bool, stdout, stderr io.Writer) error
 }

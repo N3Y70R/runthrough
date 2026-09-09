@@ -134,7 +134,7 @@ func (c *Catalog) applyDefaults() {
 		eco.Name = ecoName
 		for svcName, svc := range eco.Services {
 			svc.Name = svcName
-			if svc.Repo == "" {
+			if svc.Repo == "" && svc.Image == "" {
 				svc.Repo = svcName
 			}
 			for i := range svc.LocalFiles {
