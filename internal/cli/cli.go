@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/N3Y70R/runthrough/internal/config"
 	"github.com/N3Y70R/runthrough/internal/report"
@@ -39,6 +38,12 @@ func commands() []command {
 			summary: "show or validate the catalog in use",
 			usage:   "runthrough config show|validate [--catalog PATH] [--json]",
 			run:     runConfig,
+		},
+		{
+			name:    "doctor",
+			summary: "check whether this machine can run the stack",
+			usage:   "runthrough doctor [--eco NAME] [--catalog PATH] [--json]",
+			run:     runDoctor,
 		},
 		{
 			name:    "version",
@@ -166,9 +171,4 @@ func usage(w io.Writer) {
 	fmt.Fprintf(w, "the catalog is resolved in this order: --catalog, %s,\n", config.EnvCatalog)
 	fmt.Fprintln(w, "a runthrough.yaml found upwards from the current directory, then the")
 	fmt.Fprintln(w, "default registered in the user config.")
-}
-
-func indent(s string, n int) string {
-	pad := strings.Repeat(" ", n)
-	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 }
