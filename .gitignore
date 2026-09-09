@@ -1,0 +1,29 @@
+# Binaries
+/runthrough
+/rt
+/dist/
+*.exe
+
+# Go
+*.test
+*.out
+/vendor/
+
+# Secrets and local config — never commit
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+auth.json
+
+# Local snapshots and state
+/snapshots/
+/.runthrough/
+
+# OS / editors
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,29 @@
+# <type>(<scope>): <imperative summary, lowercase, ≤72, no period>
+
+What: <what changes technically, ≤100>
+Why: <why it is done, ≤100>
+
+# Optional context paragraph, wrapped at ~72
+#
+# Optional footer:  Tags: <tag>, <tag>   |   Refs: #<issue>   |   BREAKING CHANGE: <descr>
+#
+# ── Guide ───────────────────────────────────────────────────────────
+# Types:  feat | fix | docs | refactor | test | perf | build | ci | chore | style | revert
+# Scope (one): repo|docs|spec|ci|build|cli|mcp|core|
+#              catalog|worktree|compose|infra|data|probe|doctor|report
+# Tags (cross-cutting): breaking | security | performance | ux | migration |
+#              dependencies | tech-debt        (soft vocabulary, extensible)
+#
+# What/Why are REQUIRED for feat/fix/refactor/perf; optional for trivial
+# docs/chore/style. What and Why must say different things.
+#
+# Sign off every commit:  git commit -s
+# Do not include AI attribution or secrets/artifacts in the commit.
+#
+# Example:
+#   feat(cli): add global --json envelope with status and reason
+#
+#   What: every command emits {status, exit_code, message, result}.
+#   Why: exit codes alone were ambiguous for scripts and CI.
+#
+#   Refs: #12
