@@ -75,6 +75,7 @@ anécdota.
 | D-10 | **Los archivos locales de cada servicio son declarativos y configurables** (origen, destino con ancla `repo:`/`worktree:`, modo `link`/`copy`). La herramienta los verifica siempre y los repara solo bajo `--fix`, dentro de tres reglas no configurables | 2026-09-09 |
 | D-11 | **Baseline (código, versionado) y snapshot (captura binaria, local) son conceptos distintos.** Los snapshots son por ecosistema, viven fuera de git en ruta configurable y guardan metadatos de procedencia | 2026-09-09 |
 | D-12 | **Piso de soporte declarado y verificado por capacidades**: Docker Compose ≥ 2.20 y Engine ≥ 24, Podman experimental, y el proyecto se compila con las dos últimas versiones estables de Go | 2026-09-09 |
+| D-13 | **El onboarding asistido es un caso de uso de primera clase del frente MCP**: diagnóstico estructurado, prompts y resources. Límite duro: el agente nunca genera ni solicita secretos | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -206,6 +207,9 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 | T-07 | Configuración de usuario en `~/.config/runthrough/` | M |
 | T-08 | `doctor` valida el runtime —versión y capacidades reales— y la coherencia del catálogo | S |
 | T-09 | Cadena de resolución del catálogo, y `config show` que dice cuál se resolvió y por qué vía | M |
+| T-10 | Hallazgos de `doctor` estructurados: código estable, severidad, servicio afectado y remediación (texto, comando y si es auto-reparable) | M |
+| T-11 | El servidor MCP publica **prompts**, no solo tools: el primero es un flujo de onboarding guiado | S |
+| T-12 | Catálogo resuelto y matriz de capacidades expuestos como **resources** MCP | S |
 
 ### Bloque 11 — Runtime intercambiable
 
@@ -292,6 +296,29 @@ Reglas del frente MCP:
 - `rt_reset`, `rt_restore` y las migraciones están **bloqueadas** cuando el perfil de
   infraestructura resuelto es `shared`, sin importar quién las invoque.
 - Ninguna respuesta incluye valores de secretos: solo si están presentes o ausentes.
+
+### Prompts y resources
+
+El servidor no expone solo tools:
+
+- **Prompts** — flujos guiados que el cliente ofrece al usuario. El primero es el de
+  onboarding: localizar el catálogo, diagnosticar la máquina, reparar lo reparable y
+  levantar un subconjunto mínimo.
+- **Resources** — el catálogo resuelto y la matriz de capacidades del driver, para que el
+  agente razone sobre la topología declarada en lugar de inventarla.
+
+El onboarding es un caso de uso de primera clase (D-13): es la parte que cada persona hace
+una sola vez, mal, leyendo documentación desactualizada. Lo que lo hace posible no son más
+herramientas sino la **forma de la salida**: si `doctor` devuelve texto, el agente adivina;
+si devuelve hallazgos con código, severidad y remediación (T-10), el agente diagnostica,
+explica y repara lo reparable.
+
+Con un límite duro: **el agente nunca genera ni solicita secretos**. Puede decir qué falta,
+dónde debe ir y a quién pedirlo, y ahí se detiene (S-06).
+
+> El MCP no puede arrancarse a sí mismo: para que el agente use la herramienta, el binario
+> ya debe estar instalado y registrado en el cliente. El onboarding asistido mejora todo lo
+> que viene después del primer paso, no el primer paso.
 
 ## 9. El catálogo
 
