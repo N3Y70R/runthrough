@@ -76,6 +76,7 @@ anécdota.
 | D-11 | **Baseline (código, versionado) y snapshot (captura binaria, local) son conceptos distintos.** Los snapshots son por ecosistema, viven fuera de git en ruta configurable y guardan metadatos de procedencia | 2026-09-09 |
 | D-12 | **Piso de soporte declarado y verificado por capacidades**: Docker Compose ≥ 2.20 y Engine ≥ 24, Podman experimental, y el proyecto se compila con las dos últimas versiones estables de Go | 2026-09-09 |
 | D-13 | **El onboarding asistido es un caso de uso de primera clase del frente MCP**: diagnóstico estructurado, prompts y resources. Límite duro: el agente nunca genera ni solicita secretos | 2026-09-09 |
+| D-14 | **Distribución por binarios**: goreleaser publica macOS y Linux, Intel y ARM, al etiquetar; un tap de Homebrew es el camino principal y `go install` queda disponible. Sin firma de Apple por ahora | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -456,7 +457,6 @@ commit de un `.env`.
 
 | # | Pregunta |
 |---|---|
-| A-1 | ¿Releases con binarios por plataforma (goreleaser) o solo `go install`? |
 | A-6 | Kubernetes: ¿el driver generaría manifiestos propios o delegaría en una herramienta de dev loop existente (Tilt, Skaffold, DevSpace)? |
 
 ## 11. Roadmap

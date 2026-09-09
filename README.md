@@ -38,6 +38,19 @@ breaks, nobody can say whether it was the change or the environment.
 It is the sibling of [grove](https://github.com/neytor/grove): grove manages the *code*
 (one worktree per branch), `runthrough` manages its *execution*.
 
+## Install
+
+> Not released yet. Once it is:
+
+```bash
+brew install N3Y70R/tap/runthrough                # main path
+go install github.com/N3Y70R/runthrough@latest    # if you have a Go toolchain
+```
+
+Each tagged release publishes binaries for macOS and Linux, on Intel and ARM. A Go
+toolchain is not required to use the tool — the stacks it orchestrates are polyglot, and so
+are the people running them.
+
 ## Requirements
 
 - **Docker Engine 24+ with Compose v2.20+**, or a compatible runtime. The floor comes from
