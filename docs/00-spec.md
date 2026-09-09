@@ -73,6 +73,7 @@ anécdota.
 | D-8 | **El runtime de contenedores es un driver**: el dominio no conoce Compose. Docker/Compose es la primera implementación, Podman la segunda; Kubernetes queda fuera de v1 | 2026-09-09 |
 | D-9 | **El catálogo es un repositorio propio con forma de directorio**, localizado por una cadena de resolución explícita (ver §9) | 2026-09-09 |
 | D-10 | **Los archivos locales de cada servicio son declarativos y configurables** (origen, destino con ancla `repo:`/`worktree:`, modo `link`/`copy`). La herramienta los verifica siempre y los repara solo bajo `--fix`, dentro de tres reglas no configurables | 2026-09-09 |
+| D-11 | **Baseline (código, versionado) y snapshot (captura binaria, local) son conceptos distintos.** Los snapshots son por ecosistema, viven fuera de git en ruta configurable y guardan metadatos de procedencia | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -116,14 +117,28 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 
 | ID | Funcionalidad | Prio |
 |---|---|---|
-| D-01 | Migraciones como job run-once con `service_completed_successfully` | M |
-| D-02 | Snapshot y restore para volver al estado base entre pruebas | M |
-| D-03 | Seeds y fixtures idempotentes por escenario | S |
-| D-04 | Reset total con un comando | M |
-| D-05 | Importar y anonimizar un volcado de un entorno superior como punto de partida | C |
+| DA-01 | Migraciones como job run-once con `service_completed_successfully` | M |
+| DA-02 | **Baseline** definido en código —migraciones más seeds— y versionado en el catálogo: el estado base se reproduce desde cero y se revisa en PR | M |
+| DA-03 | Seeds y fixtures idempotentes por escenario | S |
+| DA-04 | **Snapshot y restore** para volver al estado base en segundos | M |
+| DA-05 | Snapshots **por ecosistema**: una captura abarca todos los almacenes de ese ecosistema como un conjunto coherente | M |
+| DA-06 | Snapshots **fuera de git**, en ruta configurable (por defecto el directorio de datos del usuario), con metadatos: fecha, perfil de infraestructura y commit de cada servicio | M |
+| DA-07 | Drivers de captura por tipo de almacén: bases SQL primero; cache y almacenamiento de objetos declarados como capacidad del driver | S |
+| DA-08 | Reset total con un comando | M |
+| DA-09 | Importar y anonimizar un volcado de un entorno superior como punto de partida | C |
 
-> D-02 es lo que hace comparables dos corridas: sin punto de partida restaurable, un
-> "antes y después" no significa nada.
+> **Baseline y snapshot no son lo mismo, y la jerarquía importa.** El baseline se define en
+> código, se versiona y cualquiera puede regenerarlo desde cero: es la verdad. El snapshot
+> es una foto binaria, local y desechable que restaura en segundos: es una caché. Si solo
+> hay capturas, el estado base acaba siendo un archivo que alguien generó una vez y nadie
+> sabe reproducir; si solo hay baseline, cada prueba paga la reconstrucción completa.
+>
+> Los snapshots quedan fuera de git por dos razones: son binarios grandes, y si alguna vez
+> se importa un volcado de un entorno superior (DA-09) pueden contener datos personales
+> reales — un repositorio compartido con el equipo es el peor sitio para eso.
+>
+> DA-04 es lo que hace comparables dos corridas, y DA-06 lo que hace que una captura no sea
+> un archivo huérfano: guardar el commit de cada servicio conecta el estado base con G-05.
 
 ### Bloque 5 — Build
 
@@ -405,7 +420,6 @@ commit de un `.env`.
 | # | Pregunta |
 |---|---|
 | A-1 | ¿Releases con binarios por plataforma (goreleaser) o solo `go install`? |
-| A-3 | ¿El snapshot es por ecosistema o global? ¿Se versiona junto al catálogo o queda fuera de git? |
 | A-5 | ¿Qué versión mínima de cada runtime se soporta? |
 | A-6 | Kubernetes: ¿el driver generaría manifiestos propios o delegaría en una herramienta de dev loop existente (Tilt, Skaffold, DevSpace)? |
 
