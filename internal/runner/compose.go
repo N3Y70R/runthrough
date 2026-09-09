@@ -4,12 +4,15 @@ package runner
 
 import "context"
 
-// Floor is the declared minimum for the Compose driver (D-12). include: is
-// what the multi-ecosystem catalog relies on, and the engine of that era is
-// where BuildKit became the default builder.
+// Floor is the declared minimum for the Compose driver (D-12).
+//
+// 2.20 brought include:, which the multi-ecosystem catalog relies on. 2.24
+// brought optional env files, which is what keeps one service's missing
+// secret from blocking every other service in the ecosystem — a real failure
+// observed in testing, not a hypothetical.
 const (
 	ComposeMinMajor = 2
-	ComposeMinMinor = 20
+	ComposeMinMinor = 24
 	EngineMinMajor  = 24
 	EngineMinMinor  = 0
 )

@@ -53,9 +53,11 @@ are the people running them.
 
 ## Requirements
 
-- **Docker Engine 24+ with Compose v2.20+**, or a compatible runtime. The floor comes from
-  `include:`, which the multi-ecosystem catalog relies on, and from BuildKit being the
-  default builder. A Podman driver is planned and will start out experimental.
+- **Docker Engine 24+ with Compose v2.24+**, or a compatible runtime. The floor comes from
+  `include:` (2.20), which the multi-ecosystem catalog relies on, and optional env files
+  (2.24), which keep one service's missing secret from blocking the whole ecosystem.
+  BuildKit as the default builder comes with the engine of that era. A Podman driver is
+  planned and will start out experimental.
 - **Go**: the project builds with the two most recent stable releases.
 
 `runthrough doctor` checks more than version numbers: it probes the capabilities the

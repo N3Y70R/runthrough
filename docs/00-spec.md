@@ -74,7 +74,7 @@ anécdota.
 | D-9 | **El catálogo es un repositorio propio con forma de directorio**, localizado por una cadena de resolución explícita (ver §9) | 2026-09-09 |
 | D-10 | **Los archivos locales de cada servicio son declarativos y configurables** (origen, destino con ancla `repo:`/`worktree:`, modo `link`/`copy`). La herramienta los verifica siempre y los repara solo bajo `--fix`, dentro de tres reglas no configurables | 2026-09-09 |
 | D-11 | **Baseline (código, versionado) y snapshot (captura binaria, local) son conceptos distintos.** Los snapshots son por ecosistema, viven fuera de git en ruta configurable y guardan metadatos de procedencia | 2026-09-09 |
-| D-12 | **Piso de soporte declarado y verificado por capacidades**: Docker Compose ≥ 2.20 y Engine ≥ 24, Podman experimental, y el proyecto se compila con las dos últimas versiones estables de Go | 2026-09-09 |
+| D-12 | **Piso de soporte declarado y verificado por capacidades**: Docker Compose ≥ 2.24 y Engine ≥ 24, Podman experimental, y el proyecto se compila con las dos últimas versiones estables de Go | 2026-09-09 |
 | D-13 | **El onboarding asistido es un caso de uso de primera clase del frente MCP**: diagnóstico estructurado, prompts y resources. Límite duro: el agente nunca genera ni solicita secretos | 2026-09-09 |
 | D-14 | **Distribución por binarios**: goreleaser publica macOS y Linux, Intel y ARM, al etiquetar; un tap de Homebrew es el camino principal y `go install` queda disponible. Sin firma de Apple por ahora | 2026-09-09 |
 
@@ -227,10 +227,11 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 > mañana. R-03 es lo que evita la peor forma de fallo: un stack que arranca a medias porque
 > el driver no soporta algo que el catálogo daba por hecho.
 >
-> **Piso declarado, verificación por capacidades.** El piso es **Docker Compose 2.20 y
-> Engine 24**: el mínimo que soporta `include:`, del que depende el catálogo
-> multi-ecosistema, y donde BuildKit —necesario para el build por SSH (B-01)— ya viene por
-> defecto. Pero `doctor` no se conforma con el número de versión: comprueba las capacidades
+> **Piso declarado, verificación por capacidades.** El piso es **Docker Compose 2.24 y
+> Engine 24**: `include:` (2.20) sostiene el catálogo multi-ecosistema y los `env_file`
+> opcionales (2.24) evitan que el secreto ausente de un servicio bloquee a todos los demás
+> —un fallo observado en pruebas, no hipotético—; BuildKit, necesario para el build por SSH
+> (B-01), ya viene por defecto en el engine de esa época. Pero `doctor` no se conforma con el número de versión: comprueba las capacidades
 > concretas, porque Docker Desktop, Colima, Rancher Desktop y OrbStack reportan versiones
 > distintas y soportan cosas distintas. El driver de Podman nace marcado como
 > **experimental** hasta estar ejercitado. La herramienta se compila con las **dos últimas
