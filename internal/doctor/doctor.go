@@ -62,11 +62,11 @@ type Data struct {
 	Infra    string          `json:"infra"`
 	Runtime  runner.Info     `json:"runtime"`
 	Services []ServiceReport `json:"services"`
-	Infras   []InfraReport   `json:"infrastructure,omitempty"`
-	Ports    []PortReport    `json:"ports,omitempty"`
+	Infras   []InfraReport   `json:"infrastructure"`
+	Ports    []PortReport    `json:"ports"`
 	// Requirements records presence only: no value of any secret ever
 	// reaches this struct, the JSON output or the logs.
-	Requirements []RequirementReport `json:"requirements,omitempty"`
+	Requirements []RequirementReport `json:"requirements"`
 	Artifact     *ArtifactReport     `json:"artifact,omitempty"`
 }
 
@@ -106,7 +106,15 @@ type ServiceReport struct {
 // Run performs every check and returns one result.
 func Run(ctx context.Context, o Options) *report.Result {
 	r := report.New("doctor")
-	data := &Data{Manifest: o.Catalog.Path}
+	// Empty slices, never nil: a consumer that iterates the JSON should not
+	// have to special-case null.
+	data := &Data{
+		Manifest:     o.Catalog.Path,
+		Services:     []ServiceReport{},
+		Infras:       []InfraReport{},
+		Ports:        []PortReport{},
+		Requirements: []RequirementReport{},
+	}
 
 	for _, f := range o.Catalog.Validate() {
 		if len(o.Services) > 0 && !o.scoped(f.Scope) {
@@ -119,8 +127,7 @@ func Run(ctx context.Context, o Options) *report.Result {
 	checkRuntime(r, data.Runtime)
 
 	env := newEnvSource(o.Catalog.Dir)
-	checkRequires(r, env, "catalog", o.Catalog.Requires, nil, data)
-	checkArtifact(r, o, data)
+	contract := readContract(r, o, data)
 
 	infraName := o.Infra
 	if infraName == "" {
@@ -147,9 +154,11 @@ func Run(ctx context.Context, o Options) *report.Result {
 			names = eco.AllServices()
 		}
 		scope, components, unknown := eco.Closure(names, known)
+		checkRequires(r, env, "catalog", o.Catalog.Requires, nil, data, scope)
 		for _, name := range unknown {
-			r.Fix("CFG-001", report.Error, ecoName, fmt.Sprintf("no service %q in this ecosystem", name),
-				report.Remediation{Text: "the ecosystem declares: " + strings.Join(eco.AllServices(), ", "), Fixable: false})
+			r.Fix("CFG-001", report.Error, ecoName,
+				fmt.Sprintf("no service %q in this ecosystem (it declares: %s)", name, strings.Join(eco.AllServices(), ", ")),
+				report.Remediation{Text: "check the name against the list above", Fixable: false})
 		}
 
 		locations := map[string]worktree.Location{}
@@ -164,7 +173,8 @@ func Run(ctx context.Context, o Options) *report.Result {
 			svc := eco.Services[svcName]
 			loc := locations[svcName]
 			checkRequires(r, env, ecoName+"/"+svcName, svc.Requires,
-				map[string]string{"repo": loc.Repo, "worktree": loc.Path}, data)
+				map[string]string{"repo": loc.Repo, "worktree": loc.Path}, data, scope)
+			checkReadiness(r, contract, ecoName, svcName, svc)
 		}
 
 		checkInfra(r, o.Catalog, profile, infraName, components, data)
@@ -326,7 +336,15 @@ func checkService(ctx context.Context, r *report.Result, cat *catalog.Catalog, e
 		r.Addf("WT-004", report.Warning, scope, "the clone is on branch %q but the catalog asks for %q", loc.Branch, want)
 	}
 	if loc.Dirty {
-		r.Addf("WT-005", report.Warning, scope, "the worktree has uncommitted changes: what you build will not match any commit")
+		msg := "the worktree has uncommitted changes: what you build will not match any commit"
+		if len(loc.DirtyFiles) > 0 {
+			msg += " (" + strings.Join(loc.DirtyFiles, ", ") + ")"
+		}
+		r.Fix("WT-005", report.Warning, scope, msg, report.Remediation{
+			Text:    "commit or stash them if they are yours; if they are not, the build is carrying someone else's work",
+			Command: "git -C " + loc.Path + " status --short",
+			Fixable: false,
+		})
 	}
 	if loc.GitError != "" {
 		r.Addf("WT-006", report.Warning, scope, "could not read git state: %s", loc.GitError)
@@ -451,6 +469,8 @@ func (d *Data) WriteHuman(w io.Writer) error {
 	}
 	if rt.Client != "" {
 		fmt.Fprintf(w, "versions       client %s, engine %s, compose %s\n", dash(rt.Client), dash(rt.Engine), dash(rt.Compose))
+		fmt.Fprintf(w, "floor          compose %d.%d, engine %d.%d\n",
+			runner.ComposeMinMajor, runner.ComposeMinMinor, runner.EngineMinMajor, runner.EngineMinMinor)
 	}
 	if len(rt.Capabilities) > 0 {
 		var missing []string

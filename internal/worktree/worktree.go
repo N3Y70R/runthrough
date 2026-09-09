@@ -32,14 +32,17 @@ const (
 
 // Location is where a service's code lives and what state it is in.
 type Location struct {
-	Repo     string `json:"repo_path"`
-	Path     string `json:"path"`
-	Layout   Layout `json:"layout"`
-	Exists   bool   `json:"exists"`
-	Branch   string `json:"branch,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Dirty    bool   `json:"dirty,omitempty"`
-	GitError string `json:"git_error,omitempty"`
+	Repo   string `json:"repo_path"`
+	Path   string `json:"path"`
+	Layout Layout `json:"layout"`
+	Exists bool   `json:"exists"`
+	Branch string `json:"branch,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	Dirty  bool   `json:"dirty,omitempty"`
+	// DirtyFiles names a few of them: knowing whether the changes are yours
+	// or someone else's leftovers is the whole point of being told.
+	DirtyFiles []string `json:"dirty_files,omitempty"`
+	GitError   string   `json:"git_error,omitempty"`
 }
 
 // Resolve locates the checkout a service builds from: workspace, repository
@@ -87,7 +90,18 @@ func (l *Location) readGit(ctx context.Context) {
 		l.Commit = commit
 	}
 	if status, err := git(ctx, l.Path, "status", "--porcelain"); err == nil {
-		l.Dirty = strings.TrimSpace(status) != ""
+		status = strings.TrimSpace(status)
+		l.Dirty = status != ""
+		for i, line := range strings.Split(status, "\n") {
+			if line == "" {
+				continue
+			}
+			if i == 5 {
+				l.DirtyFiles = append(l.DirtyFiles, "and more")
+				break
+			}
+			l.DirtyFiles = append(l.DirtyFiles, strings.TrimSpace(line))
+		}
 	}
 }
 

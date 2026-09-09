@@ -75,9 +75,9 @@ func envNames(path string) map[string]bool {
 // checkRequires verifies that what a catalog or service declares it needs is
 // present. It reports what is missing and why it matters; it never invents a
 // value, and never prints one.
-func checkRequires(r *report.Result, src envSource, scope string, req catalog.Requires, paths map[string]string, data *Data) {
+func checkRequires(r *report.Result, src envSource, scope string, req catalog.Requires, paths map[string]string, data *Data, inScope []string) {
 	for _, e := range req.Env {
-		if e.Name == "" {
+		if e.Name == "" || !e.Applies(inScope) {
 			continue
 		}
 		source := src.find(e.Name)
@@ -100,13 +100,20 @@ func checkRequires(r *report.Result, src envSource, scope string, req catalog.Re
 		if e.Why != "" {
 			msg += ": " + e.Why
 		}
+		// The two paths are not equivalent, and saying "or" as if they were
+		// let a tester believe the problem was solved: exporting satisfies
+		// this run only, while the .env travels with the catalog and reaches
+		// the command the tool prints for you to paste.
 		r.Fix(code, severity, scope, msg, report.Remediation{
-			Text:    fmt.Sprintf("export %s in your shell, or define it in the .env next to the catalog — the tool checks that it exists, never what it holds", e.Name),
+			Text:    fmt.Sprintf("define %s in the .env next to the catalog so it travels with it; exporting it in your shell also works, but only for commands run from that shell. Either way the tool checks that it exists, never what it holds", e.Name),
 			Fixable: false,
 		})
 	}
 
 	for _, f := range req.Files {
+		if !f.Applies(inScope) {
+			continue
+		}
 		path := expandPath(f.Path, src.catalogDir, paths)
 		_, err := os.Stat(path)
 		present := err == nil

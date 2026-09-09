@@ -22,14 +22,44 @@ type EnvRequirement struct {
 	Optional bool   `yaml:"optional"`
 	// Phase narrows when it matters: "build", "run", or empty for both.
 	Phase string `yaml:"phase"`
+	// Services narrows WHO needs it. A secret shared by three services does
+	// not belong to the fourth, and blocking that one on it undoes the
+	// point of checking a slice of the stack at a time.
+	Services []string `yaml:"services"`
+}
+
+// Applies reports whether a requirement is in scope. A requirement that names
+// no services applies to the whole catalog.
+func (e EnvRequirement) Applies(scope []string) bool {
+	return appliesTo(e.Services, scope)
+}
+
+// Applies reports whether a file requirement is in scope.
+func (f FileRequirement) Applies(scope []string) bool {
+	return appliesTo(f.Services, scope)
+}
+
+func appliesTo(declared, scope []string) bool {
+	if len(declared) == 0 || len(scope) == 0 {
+		return true
+	}
+	for _, d := range declared {
+		for _, s := range scope {
+			if d == s {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // FileRequirement is one file that must exist. Placeholders {catalog},
 // {repo} and {worktree} are resolved before checking.
 type FileRequirement struct {
-	Path     string `yaml:"path"`
-	Why      string `yaml:"why"`
-	Optional bool   `yaml:"optional"`
+	Path     string   `yaml:"path"`
+	Why      string   `yaml:"why"`
+	Optional bool     `yaml:"optional"`
+	Services []string `yaml:"services"`
 }
 
 // KnownPhases are the values Phase accepts.

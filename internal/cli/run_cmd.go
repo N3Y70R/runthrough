@@ -140,18 +140,41 @@ func runUp(e *env, args []string) (*report.Result, error) {
 	// A container that exists is not a service that answers. Waiting here is
 	// what makes a green result mean something.
 	if err == nil && !*noWait {
-		data.Ready = probe.Wait(ctx, p.WaitTargets(services), time.Duration(*waitFor)*time.Second)
-		for _, res := range data.Ready {
-			if res.Skipped || res.Ready {
-				continue
+		status := func(ctx context.Context) (map[string]probe.State, error) {
+			states, err := driver.Status(ctx, p.Invocation())
+			if err != nil {
+				return nil, err
 			}
-			r.Fix("UP-003", report.Warning, p.Ecosystem+"/"+res.Service,
-				fmt.Sprintf("started, but did not answer at %s within %ds", res.Target, *waitFor),
-				report.Remediation{
-					Text:    "read its log to see whether it is still starting or actually broken",
-					Command: "runthrough logs " + res.Service,
-					Fixable: false,
-				})
+			out := map[string]probe.State{}
+			for name, s := range states {
+				out[name] = probe.State{Running: s.State == "running", Health: s.Health}
+			}
+			return out, nil
+		}
+		data.Ready = probe.Wait(ctx, p.WaitTargets(services), time.Duration(*waitFor)*time.Second, status)
+		for _, res := range data.Ready {
+			switch {
+			case res.Skipped || res.Ready:
+				continue
+			case res.Unverifiable:
+				// Not a failure, but not a success either: the command
+				// must not imply it verified something it could not.
+				r.Fix("UP-004", report.Warning, p.Ecosystem+"/"+res.Service,
+					"started, but its readiness cannot be verified from here",
+					report.Remediation{Text: res.Detail, Fixable: false})
+			default:
+				// A service that never answers is a failed run, not a
+				// warning: a warning leaves the exit code at zero, and a
+				// green pipeline step nobody reads is how this goes
+				// unnoticed.
+				r.Fix("UP-003", report.Error, p.Ecosystem+"/"+res.Service,
+					fmt.Sprintf("started, but did not answer at %s within %ds", res.Target, *waitFor),
+					report.Remediation{
+						Text:    "read its log to see whether it is still starting or actually broken",
+						Command: "runthrough logs " + res.Service,
+						Fixable: false,
+					})
+			}
 		}
 	}
 	r.Data = data
@@ -162,11 +185,17 @@ func runDown(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("down")
 	eco := fs.String("eco", "", "ecosystem to take down")
 	volumes := fs.Bool("volumes", false, "also delete the volumes: this destroys local data")
-	if _, err := parse(fs, args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, "", setFlag{})
 	if err != nil {
+		return nil, err
+	}
+	// Naming a service must stop that service. Accepting the name and
+	// stopping everything is the worst possible reading of a typo.
+	if err := known(p, services); err != nil {
 		return nil, err
 	}
 	if err := p.WriteEnvFile(); err != nil {
@@ -174,10 +203,30 @@ func runDown(e *env, args []string) (*report.Result, error) {
 	}
 	driver := runner.NewCompose()
 	r := report.New("down")
-	if err := driver.Down(context.Background(), p.Invocation(), runner.DownOptions{Volumes: *volumes}, e.stderr, e.stderr); err != nil {
+	ctx := context.Background()
+
+	if len(services) > 0 {
+		if *volumes {
+			return nil, fmt.Errorf("--volumes takes the whole stack down: run it without naming services")
+		}
+		if err := driver.Stop(ctx, p.Invocation(), services, e.stderr, e.stderr); err != nil {
+			r.Addf("DN-001", report.Error, p.Ecosystem, "the runtime refused to stop %s: %v", strings.Join(services, ", "), err)
+		}
+		r.Data = &simpleData{Line: "stopped " + strings.Join(services, ", ")}
+		return r, nil
+	}
+
+	if err := driver.Down(ctx, p.Invocation(), runner.DownOptions{Volumes: *volumes}, e.stderr, e.stderr); err != nil {
 		r.Addf("DN-001", report.Error, p.Ecosystem, "the runtime refused to take the stack down: %v", err)
 	}
-	r.Data = &simpleData{Line: fmt.Sprintf("stack %s stopped (volumes kept: %v)", p.Project, !*volumes)}
+	// The generated env-file carries whatever the catalog's .env held, so
+	// taking the stack down removes it rather than leaving a copy behind.
+	removed := p.RemoveEnvFile() == nil
+	line := fmt.Sprintf("stack %s stopped (volumes kept: %v)", p.Project, !*volumes)
+	if removed {
+		line += "; generated env-file removed"
+	}
+	r.Data = &simpleData{Line: line}
 	return r, nil
 }
 
@@ -301,15 +350,17 @@ func (d *upData) WriteHuman(w io.Writer) error {
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "%-16s %-8s %s\n", "SERVICE", "READY", "PROBE")
 		for _, res := range d.Ready {
-			state := "no"
+			state := "NO"
 			switch {
 			case res.Skipped:
 				state = "-"
+			case res.Unverifiable:
+				state = "unknown"
 			case res.Ready:
 				state = fmt.Sprintf("%ds", res.Seconds)
 			}
 			detail := res.Target
-			if res.Skipped {
+			if res.Skipped || res.Unverifiable {
 				detail = res.Detail
 			}
 			fmt.Fprintf(w, "%-16s %-8s %s\n", res.Service, state, detail)
