@@ -59,6 +59,9 @@ type Data struct {
 	Services []ServiceReport `json:"services"`
 	Infras   []InfraReport   `json:"infrastructure,omitempty"`
 	Ports    []PortReport    `json:"ports,omitempty"`
+	// Requirements records presence only: no value of any secret ever
+	// reaches this struct, the JSON output or the logs.
+	Requirements []RequirementReport `json:"requirements,omitempty"`
 }
 
 // InfraReport is one infrastructure component and whether it answers.
@@ -101,6 +104,9 @@ func Run(ctx context.Context, o Options) *report.Result {
 	data.Runtime = o.Driver.Probe(ctx)
 	checkRuntime(r, data.Runtime)
 
+	env := newEnvSource(o.Catalog.Dir)
+	checkRequires(r, env, "catalog", o.Catalog.Requires, nil, data)
+
 	infraName := o.Infra
 	if infraName == "" {
 		infraName = o.Catalog.Infra.Default
@@ -131,9 +137,19 @@ func Run(ctx context.Context, o Options) *report.Result {
 				report.Remediation{Text: "the ecosystem declares: " + strings.Join(eco.AllServices(), ", "), Fixable: false})
 		}
 
+		locations := map[string]worktree.Location{}
 		for _, svcName := range scope {
 			svc := eco.Services[svcName]
-			data.Services = append(data.Services, checkService(ctx, r, o.Catalog, eco, svc))
+			sr := checkService(ctx, r, o.Catalog, eco, svc)
+			locations[svcName] = sr.Location
+			data.Services = append(data.Services, sr)
+		}
+
+		for _, svcName := range scope {
+			svc := eco.Services[svcName]
+			loc := locations[svcName]
+			checkRequires(r, env, ecoName+"/"+svcName, svc.Requires,
+				map[string]string{"repo": loc.Repo, "worktree": loc.Path}, data)
 		}
 
 		checkInfra(r, o.Catalog, profile, infraName, components, data)

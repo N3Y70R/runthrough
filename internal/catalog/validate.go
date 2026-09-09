@@ -35,6 +35,8 @@ func (c *Catalog) Validate() []report.Finding {
 		f.errorf("CAT-003", "defaults", "local file mode %q is not one of %s", mode, strings.Join(KnownModes, ", "))
 	}
 
+	validateRequires(&f, "catalog", c.Requires)
+
 	infra := c.Infra.Components()
 	hostPorts := map[int]string{}
 
@@ -123,6 +125,8 @@ func (c *Catalog) validateEcosystem(f *findings, eco *Ecosystem, infra map[strin
 			}
 		}
 
+		validateRequires(f, scope, svc.Requires)
+
 		if svc.GatewayRoot {
 			roots++
 		}
@@ -192,6 +196,22 @@ func (c *Catalog) validateCycles(f *findings, eco *Ecosystem) {
 			if visit(name) {
 				return
 			}
+		}
+	}
+}
+
+func validateRequires(f *findings, scope string, req Requires) {
+	for i, e := range req.Env {
+		if e.Name == "" {
+			f.errorf("CAT-023", scope, "required env %d has no name", i+1)
+		}
+		if !oneOf(e.Phase, KnownPhases) {
+			f.errorf("CAT-024", scope, "required env %q declares phase %q, which is not build or run", e.Name, e.Phase)
+		}
+	}
+	for i, file := range req.Files {
+		if file.Path == "" {
+			f.errorf("CAT-025", scope, "required file %d has no path", i+1)
 		}
 	}
 }

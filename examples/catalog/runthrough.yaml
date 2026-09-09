@@ -9,6 +9,17 @@ defaults:
     store: "{repo}/artifacts"
     mode: link
 
+# What has to be present before anything runs. Presence is checked; content
+# never is, and no value is ever printed or generated.
+requires:
+  env:
+    - name: JWT_SECRET
+      why: "shared signing secret: services reject each other's tokens without it"
+  files:
+    - path: "{catalog}/.env"
+      why: "where JWT_SECRET is defined; copy .env.example and fill it in"
+      optional: true
+
 ecosystems:
   backend:
     workspace: ~/work
@@ -24,6 +35,12 @@ ecosystems:
     services:
       users-api:
         runtime: go
+        requires:
+          env:
+            - name: REGISTRY_TOKEN
+              phase: build
+              why: "pulls private modules while building"
+              optional: true
         build: { recipe: go-ssh, binary: cmd/main.go }
         port: { internal: 8080, host: 8086 }
         health: { type: http, path: /health }

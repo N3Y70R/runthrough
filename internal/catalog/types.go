@@ -13,6 +13,7 @@ type Catalog struct {
 	Version    int                   `yaml:"version"`
 	Include    []string              `yaml:"include"`
 	Defaults   Defaults              `yaml:"defaults"`
+	Requires   Requires              `yaml:"requires"`
 	Ecosystems map[string]*Ecosystem `yaml:"ecosystems"`
 	Infra      Infra                 `yaml:"infra"`
 
@@ -70,6 +71,7 @@ type Service struct {
 	Dev         *Dev              `yaml:"dev"`
 	Infra       map[string]string `yaml:"infra"`
 	LocalFiles  []LocalFile       `yaml:"local_files"`
+	Requires    Requires          `yaml:"requires"`
 	GatewayRoot bool              `yaml:"gateway_root"`
 }
 
