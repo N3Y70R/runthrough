@@ -48,9 +48,9 @@ anécdota.
    servidor MCP son frentes delgados sobre las mismas operaciones.
 2. **Salida estructurada primero.** Cada operación devuelve JSON; la CLI le da formato
    humano. Un agente razona sobre datos, no parsea texto.
-3. **Escape hatch permanente.** Los archivos de compose siguen siendo legibles y
-   ejecutables a mano. El día que la herramienta falle o estorbe, `docker compose` sigue
-   funcionando.
+3. **Escape hatch permanente.** Cada driver deja artefactos legibles y ejecutables a mano:
+   archivos de compose en el driver de Compose, manifiestos en el que venga después. El día
+   que la herramienta falle o estorbe, el runtime sigue funcionando sin ella.
 4. **Declarativo, no imperativo.** El catálogo es la fuente de verdad de servicios,
    puertos, dependencias e infraestructura. Los comandos lo leen, no lo sustituyen.
 5. **Seguro por defecto.** Las operaciones destructivas se bloquean cuando la
@@ -70,6 +70,7 @@ anécdota.
 | D-5 | **Genérica por diseño**: la herramienta no conoce ninguna organización. Los catálogos son datos externos | 2026-09-09 |
 | D-6 | **Agnóstica de lenguaje**: el runtime de cada servicio se declara en el catálogo | 2026-09-09 |
 | D-7 | **Licencia GPL-3.0-or-later**, gobernanza por DCO sin cesión de copyright | 2026-09-09 |
+| D-8 | **El runtime de contenedores es un driver**: el dominio no conoce Compose. Docker/Compose es la primera implementación, Podman la segunda; Kubernetes queda fuera de v1 | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -183,7 +184,22 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 | T-05 | Catálogo declarativo como única fuente de verdad | M |
 | T-06 | Escape hatch: el compose sigue siendo ejecutable a mano | M |
 | T-07 | Configuración de usuario en `~/.config/runthrough/` | M |
-| T-08 | `doctor` valida versiones de docker/compose y coherencia del catálogo | S |
+| T-08 | `doctor` valida versiones del runtime y coherencia del catálogo | S |
+
+### Bloque 11 — Runtime intercambiable
+
+| ID | Funcionalidad | Prio |
+|---|---|---|
+| R-01 | Puerto `Runner` (`up`, `down`, `rebuild`, `logs`, `status`, `exec`) con drivers intercambiables | M |
+| R-02 | Vocabulario del catálogo **neutral**: `needs`, `expose`, `host_alias` — nunca términos propios de un runtime | M |
+| R-03 | Matriz de capacidades por driver (build por SSH, condiciones de dependencia, bind mounts, red del host); `doctor` la reporta y `up` falla temprano en vez de a medias | M |
+| R-04 | Driver de Podman | S |
+| R-05 | La exposición se declara como **intención** (`gateway`, `direct`), y el driver la traduce a puertos publicados, port-forward o Ingress | M |
+| R-06 | Kubernetes fuera de v1: cuando llegue será un driver que genere manifiestos o delegue en una herramienta de dev loop existente | C |
+
+> R-02 y R-05 no cuestan nada hoy y son lo único que hace posible un segundo runtime
+> mañana. R-03 es lo que evita la peor forma de fallo: un stack que arranca a medias porque
+> el driver no soporta algo que el catálogo daba por hecho.
 
 ## 6. Arquitectura
 
@@ -193,7 +209,9 @@ Una capa de dominio, dos frentes. Ningún comando contiene lógica de negocio.
 cmd/runthrough/            CLI + subcomando `mcp`
 internal/catalog/          modelo declarativo: ecosistemas, servicios, perfiles
 internal/worktree/         descubre repos y worktrees; resuelve rama y commit
-internal/compose/          resuelve variables e invoca docker compose (NO genera el compose)
+internal/runner/           puerto Runner: up, down, rebuild, logs, status, exec
+  compose/                 driver Docker Compose: resuelve variables e invoca docker compose
+  podman/                  driver Podman: mismo modelo, semántica propia
 internal/infra/            perfiles local/host/shared, resolución por servicio, salvaguardas
 internal/data/             snapshot, restore, seed, reset
 internal/probe/            healths, smokes, resolución interna de nombres
@@ -205,8 +223,9 @@ compose/                   archivos de compose versionados, por ecosistema
 
 - `internal/worktree` **lee el layout del disco**, no depende del binario de grove: la
   herramienta funciona igual con repos gestionados por worktrees o con clones planos.
-- `internal/compose` construye el entorno efectivo y delega en `docker compose`. Es el
-  punto donde se respeta el escape hatch.
+- `internal/runner` es un **puerto**, no una implementación: el dominio habla de servicios,
+  dependencias y exposición, nunca de Compose. Cada driver traduce a su runtime y declara
+  qué capacidades soporta; el escape hatch se respeta dentro de cada driver.
 - `internal/report` existe para que la salida JSON no sea un añadido tardío: toda operación
   produce una estructura y el render humano es una vista de ella.
 
@@ -308,7 +327,8 @@ URL interna— lo resuelve la herramienta según el perfil activo.
 | A-2 | ¿Cómo se distribuye el catálogo de una organización: repositorio aparte o convención de ruta? |
 | A-3 | ¿El snapshot es por ecosistema o global? ¿Se versiona junto al catálogo o queda fuera de git? |
 | A-4 | ¿La herramienta gestiona los archivos locales de cada repo o solo verifica que existan? |
-| A-5 | ¿Qué mínimo de Docker y Compose se soporta? |
+| A-5 | ¿Qué versión mínima de cada runtime se soporta? |
+| A-6 | Kubernetes: ¿el driver generaría manifiestos propios o delegaría en una herramienta de dev loop existente (Tilt, Skaffold, DevSpace)? |
 
 ## 11. Roadmap
 
