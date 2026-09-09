@@ -71,6 +71,7 @@ anécdota.
 | D-6 | **Agnóstica de lenguaje**: el runtime de cada servicio se declara en el catálogo | 2026-09-09 |
 | D-7 | **Licencia GPL-3.0-or-later**, gobernanza por DCO sin cesión de copyright | 2026-09-09 |
 | D-8 | **El runtime de contenedores es un driver**: el dominio no conoce Compose. Docker/Compose es la primera implementación, Podman la segunda; Kubernetes queda fuera de v1 | 2026-09-09 |
+| D-9 | **El catálogo es un repositorio propio con forma de directorio**, localizado por una cadena de resolución explícita (ver §9) | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -185,6 +186,7 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 | T-06 | Escape hatch: el compose sigue siendo ejecutable a mano | M |
 | T-07 | Configuración de usuario en `~/.config/runthrough/` | M |
 | T-08 | `doctor` valida versiones del runtime y coherencia del catálogo | S |
+| T-09 | Cadena de resolución del catálogo, y `config show` que dice cuál se resolvió y por qué vía | M |
 
 ### Bloque 11 — Runtime intercambiable
 
@@ -263,7 +265,47 @@ Reglas del frente MCP:
   infraestructura resuelto es `shared`, sin importar quién las invoque.
 - Ninguna respuesta incluye valores de secretos: solo si están presentes o ausentes.
 
-## 9. Modelo de catálogo (ilustrativo)
+## 9. El catálogo
+
+### Forma y ubicación
+
+El catálogo es un **repositorio propio**, versionado y revisable, independiente tanto del
+código de la herramienta (D-5) como de los repos de servicio. Su forma es un directorio:
+
+```
+mi-catalogo/
+├── runthrough.yaml     manifiesto raíz: ecosistemas, perfiles de infra, includes
+├── compose/            un archivo por ecosistema
+│   ├── backend.yml
+│   └── data.yml
+├── profiles/           perfiles de conjunto: qué worktree usa cada servicio
+│   └── release.yaml
+└── gateway/            configuración del gateway por ecosistema
+```
+
+Las rutas relativas del manifiesto se resuelven **contra el manifiesto**, nunca contra el
+directorio de trabajo. `workspace:` admite ruta absoluta o `~`, así que el catálogo puede
+vivir fuera del workspace donde están los repos de servicio.
+
+Que sea un repositorio no es burocracia: hace que añadir un servicio al ecosistema pase por
+revisión, quede en la historia y llegue igual a toda la gente del equipo.
+
+### Cadena de resolución
+
+Gana el primero que exista:
+
+1. `--catalog <ruta>`
+2. `RUNTHROUGH_CATALOG`
+3. un `runthrough.yaml` buscando hacia arriba desde el directorio actual
+4. el catálogo por defecto registrado en `~/.config/runthrough/config.yaml`
+
+`runthrough config show` imprime cuál se resolvió **y por cuál de las cuatro vías**, porque
+"¿qué catálogo estás usando?" es la primera pregunta cuando algo no cuadra.
+
+Ningún secreto vive en el catálogo: los valores sensibles se referencian por nombre de
+variable y residen en los `.env` (S-01).
+
+### Manifiesto (ilustrativo)
 
 ```yaml
 version: 1
@@ -324,7 +366,6 @@ URL interna— lo resuelve la herramienta según el perfil activo.
 | # | Pregunta |
 |---|---|
 | A-1 | ¿Releases con binarios por plataforma (goreleaser) o solo `go install`? |
-| A-2 | ¿Cómo se distribuye el catálogo de una organización: repositorio aparte o convención de ruta? |
 | A-3 | ¿El snapshot es por ecosistema o global? ¿Se versiona junto al catálogo o queda fuera de git? |
 | A-4 | ¿La herramienta gestiona los archivos locales de cada repo o solo verifica que existan? |
 | A-5 | ¿Qué versión mínima de cada runtime se soporta? |
