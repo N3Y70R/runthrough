@@ -1,0 +1,18 @@
+version: 1
+ecosystems:
+  broken:
+    workspace: ~/work
+    default_worktree: main
+    services:
+      a:
+        runtime: go
+        port: { internal: 8080, host: 9000 }
+        health: { type: http }
+        needs: [b, ghost]
+      b:
+        runtime: rust
+        port: { internal: 8080, host: 9000 }
+        health: { type: nonsense }
+        needs: [a]
+        local_files:
+          - { from: .env, to: ".env" }

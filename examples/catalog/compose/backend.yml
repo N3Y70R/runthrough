@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Placeholder: the compose driver will own this file. It stays readable and
+# runnable by hand — that is the escape hatch (principle 3).
+name: example-backend
+services: {}

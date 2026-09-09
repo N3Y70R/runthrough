@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# A minimal, runnable-looking catalog used as documentation and as a fixture.
+# Service names are neutral on purpose: the tool knows no organization (D-5).
+version: 1
+
+defaults:
+  local_files:
+    store: "{repo}/artifacts"
+    mode: link
+
+ecosystems:
+  backend:
+    workspace: ~/work
+    git_host: github
+    default_worktree: main
+    compose: compose/backend.yml
+    port_range: [8080, 8099]
+    gateway:
+      port: 8090
+      routes:
+        /orders: orders-api
+        /users: users-api
+    services:
+      users-api:
+        runtime: go
+        build: { recipe: go-ssh, binary: cmd/main.go }
+        port: { internal: 8080, host: 8086 }
+        health: { type: http, path: /health }
+        needs: [postgres]
+        local_files:
+          - { from: .env, to: "repo:.env" }
+
+      orders-api:
+        runtime: go
+        build: { recipe: go-ssh, binary: cmd/main.go }
+        port: { internal: 8080, host: 8081 }
+        health: { type: http, path: /health }
+        needs: [users-api, postgres]
+        local_files:
+          - { from: .env, to: "repo:.env" }
+          - { from: Dockerfile.local, to: "worktree:Dockerfile.local" }
+
+      bff:
+        runtime: node
+        build: { recipe: node-yarn, node: 22 }
+        port: { internal: 3000, host: 8087 }
+        health: { type: http, path: /health }
+        dev: { mount: true, command: "yarn start:dev" }
+        needs: [orders-api, redis]
+        local_files:
+          - { from: .env, to: "worktree:.env", required: true }
+
+      web-front:
+        runtime: angular
+        build: { recipe: spa, node: 22, dist: dist/browser }
+        port: { internal: 80, host: 8088 }
+        health: { type: tcp }
+        dev: { mount: true, command: "yarn start", port: 4200 }
+        needs: [bff]
+        gateway_root: true
+
+infra:
+  profiles:
+    local:
+      postgres: container
+      redis: container
+    host:
+      postgres: host
+      redis: host
+    shared:
+      postgres: remote
+      redis: remote
+      guard: read-only
