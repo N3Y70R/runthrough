@@ -6,7 +6,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: build test vet fmt check clean
+.PHONY: build test vet fmt fmt-check check clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/runthrough
@@ -20,7 +20,11 @@ vet:
 fmt:
 	gofmt -l -w .
 
-check: fmt vet test
+# check never writes: a target that reformats the tree cannot be trusted in CI.
+fmt-check:
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+
+check: fmt-check vet test
 
 clean:
 	rm -rf bin

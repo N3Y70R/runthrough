@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/N3Y70R/runthrough/internal/catalog"
 	"github.com/N3Y70R/runthrough/internal/localfile"
@@ -27,7 +28,23 @@ import (
 type Options struct {
 	Catalog   *catalog.Catalog
 	Ecosystem string
-	Driver    runner.Driver
+	// Services narrows the check to these services. Asking about one service
+	// and being blocked by another one's problem defeats the purpose of
+	// checking a slice of the stack at a time.
+	Services []string
+	Driver   runner.Driver
+}
+
+func (o Options) wants(name string) bool {
+	if len(o.Services) == 0 {
+		return true
+	}
+	for _, s := range o.Services {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Data is the structured outcome, and the human view of a run.
@@ -52,6 +69,9 @@ func Run(ctx context.Context, o Options) *report.Result {
 	data := &Data{Manifest: o.Catalog.Path}
 
 	for _, f := range o.Catalog.Validate() {
+		if len(o.Services) > 0 && !o.scoped(f.Scope) {
+			continue
+		}
 		r.Add(f)
 	}
 
@@ -64,6 +84,9 @@ func Run(ctx context.Context, o Options) *report.Result {
 		}
 		eco := o.Catalog.Ecosystems[ecoName]
 		for _, svcName := range sortedServices(eco) {
+			if !o.wants(svcName) {
+				continue
+			}
 			svc := eco.Services[svcName]
 			data.Services = append(data.Services, checkService(ctx, r, o.Catalog, eco, svc))
 		}
@@ -71,6 +94,23 @@ func Run(ctx context.Context, o Options) *report.Result {
 
 	r.Data = data
 	return r
+}
+
+// scoped reports whether a finding's scope belongs to the requested services.
+// Findings that are not about a particular service always apply.
+func (o Options) scoped(scope string) bool {
+	if scope == "" {
+		return true
+	}
+	name := scope
+	if i := strings.LastIndex(scope, "/"); i >= 0 {
+		name = scope[i+1:]
+	}
+	if name == scope {
+		// An ecosystem-wide or defaults finding, not a service one.
+		return true
+	}
+	return o.wants(name)
 }
 
 func checkRuntime(r *report.Result, info runner.Info) {

@@ -18,7 +18,7 @@ func runConfig(e *env, args []string) (*report.Result, error) {
 	}
 	sub := args[0]
 	fs := e.flags("config " + sub)
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parse(fs, args[1:]); err != nil {
 		return nil, err
 	}
 

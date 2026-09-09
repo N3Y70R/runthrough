@@ -4,7 +4,6 @@ package runner
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -46,11 +45,22 @@ func (c *Compose) Logs(ctx context.Context, inv Invocation, services []string, f
 	return c.run(ctx, inv, append(args, services...), stdout, stderr)
 }
 
-// Command renders the equivalent command line. It is what makes the escape
-// hatch real: whatever the tool does, a person can reproduce by hand.
+// Command renders the equivalent command line, including the env-file, so
+// that pasting it reproduces exactly what the tool ran (principle 3).
 func (c *Compose) Command(inv Invocation, args []string) string {
-	return fmt.Sprintf("docker compose -p %s -f %s --project-directory %s %s",
-		inv.Project, inv.File, inv.Dir, join(args))
+	return "docker compose " + join(append(c.base(inv), args...))
+}
+
+func (c *Compose) base(inv Invocation) []string {
+	base := []string{
+		"--project-name", inv.Project,
+		"--file", inv.File,
+		"--project-directory", inv.Dir,
+	}
+	if inv.EnvFile != "" {
+		base = append(base, "--env-file", inv.EnvFile)
+	}
+	return base
 }
 
 func (c *Compose) run(ctx context.Context, inv Invocation, args []string, stdout, stderr io.Writer) error {
@@ -58,12 +68,7 @@ func (c *Compose) run(ctx context.Context, inv Invocation, args []string, stdout
 	if bin == "" {
 		bin = "docker"
 	}
-	full := append([]string{
-		"compose",
-		"--project-name", inv.Project,
-		"--file", inv.File,
-		"--project-directory", inv.Dir,
-	}, args...)
+	full := append([]string{"compose"}, append(c.base(inv), args...)...)
 
 	cmd := exec.CommandContext(ctx, bin, full...)
 	cmd.Env = environ(inv.Env)

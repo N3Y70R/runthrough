@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/N3Y70R/runthrough/internal/config"
 	"github.com/N3Y70R/runthrough/internal/report"
@@ -139,6 +140,47 @@ func (e *env) flags(name string) *flag.FlagSet {
 	return fs
 }
 
+// parse handles flags that appear before OR after positional arguments.
+//
+// The standard library stops parsing at the first non-flag argument, so
+// `up web-front --catalog X` would silently drop --catalog and then complain
+// that no catalog was found — an error that sends you to debug the wrong
+// place. Here the two are separated first and the flags parsed on their own.
+func parse(fs *flag.FlagSet, args []string) ([]string, error) {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			positional = append(positional, a)
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			flags = append(flags, a)
+			continue
+		}
+		flags = append(flags, a)
+		// A non-boolean flag consumes the next argument as its value.
+		if f := fs.Lookup(name); f != nil && !isBool(f) && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	if err := fs.Parse(flags); err != nil {
+		return nil, err
+	}
+	return append(positional, fs.Args()...), nil
+}
+
+func isBool(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
+}
+
 // lookup assembles the resolution chain inputs (D-9).
 func (e *env) lookup() (config.Lookup, *config.User, error) {
 	user, err := config.LoadUser()
@@ -159,7 +201,7 @@ func (e *env) lookup() (config.Lookup, *config.User, error) {
 
 func runVersion(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("version")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parse(fs, args); err != nil {
 		return nil, err
 	}
 	r := report.New("version")

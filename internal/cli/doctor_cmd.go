@@ -15,7 +15,8 @@ import (
 func runDoctor(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("doctor")
 	eco := fs.String("eco", "", "check only this ecosystem")
-	if err := fs.Parse(args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 
@@ -35,6 +36,7 @@ func runDoctor(e *env, args []string) (*report.Result, error) {
 	return doctor.Run(context.Background(), doctor.Options{
 		Catalog:   cat,
 		Ecosystem: *eco,
+		Services:  services,
 		Driver:    runner.NewCompose(),
 	}), nil
 }

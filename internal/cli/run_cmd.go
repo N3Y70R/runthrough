@@ -58,7 +58,8 @@ func runUp(e *env, args []string) (*report.Result, error) {
 	skip := fs.Bool("skip-checks", false, "start without running the readiness checks first")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
-	if err := fs.Parse(args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 
@@ -71,33 +72,39 @@ func runUp(e *env, args []string) (*report.Result, error) {
 
 	r := report.New("up")
 	if !*skip {
-		checks := doctor.Run(ctx, doctor.Options{Catalog: cat, Ecosystem: p.Ecosystem, Driver: driver})
+		checks := doctor.Run(ctx, doctor.Options{Catalog: cat, Ecosystem: p.Ecosystem, Services: services, Driver: driver})
 		for _, f := range checks.Findings {
 			r.Add(f)
 		}
 		if r.HasErrors() {
-			r.Data = &upData{Plan: p, Started: false, Note: "nothing was started: the readiness checks found errors. Fix them, or pass --skip-checks to start anyway."}
+			r.Data = &upData{Plan: p, Requested: services, Started: false, Note: "nothing was started: the readiness checks found errors. Fix them, or pass --skip-checks to start anyway."}
 			return r, nil
 		}
 	}
-	if missing := p.Missing(); len(missing) > 0 {
-		for _, s := range missing {
-			r.Addf("UP-001", report.Error, p.Ecosystem+"/"+s.Name, "the worktree %q of %s is not on disk", s.Worktree, s.Repo)
+	for _, s := range p.Missing() {
+		if len(services) > 0 && !contains(services, s.Name) {
+			continue
 		}
-		r.Data = &upData{Plan: p, Started: false, Note: "nothing was started: some services have no code to build from."}
+		r.Addf("UP-001", report.Error, p.Ecosystem+"/"+s.Name, "the worktree %q of %s is not on disk", s.Worktree, s.Repo)
+	}
+	if r.HasErrors() {
+		r.Data = &upData{Plan: p, Requested: services, Started: false, Note: "nothing was started: some services have no code to build from."}
 		return r, nil
 	}
 
-	err = driver.Up(ctx, p.Invocation(), runner.UpOptions{Services: fs.Args(), Build: *build}, e.stderr, e.stderr)
+	if err := p.WriteEnvFile(); err != nil {
+		return nil, err
+	}
+	err = driver.Up(ctx, p.Invocation(), runner.UpOptions{Services: services, Build: *build}, e.stdout, e.stderr)
 	if err != nil {
 		r.Fix("UP-002", report.Error, p.Ecosystem, fmt.Sprintf("the runtime refused to bring the stack up: %v", err),
 			report.Remediation{
 				Text:    "reproduce it by hand with the same arguments the tool used",
-				Command: driver.Command(p.Invocation(), []string{"up", "--detach"}),
+				Command: driver.Command(p.Invocation(), append([]string{"up", "--detach"}, services...)),
 				Fixable: false,
 			})
 	}
-	r.Data = &upData{Plan: p, Started: err == nil}
+	r.Data = &upData{Plan: p, Requested: services, Started: err == nil}
 	return r, nil
 }
 
@@ -105,11 +112,14 @@ func runDown(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("down")
 	eco := fs.String("eco", "", "ecosystem to take down")
 	volumes := fs.Bool("volumes", false, "also delete the volumes: this destroys local data")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parse(fs, args); err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, "", setFlag{})
 	if err != nil {
+		return nil, err
+	}
+	if err := p.WriteEnvFile(); err != nil {
 		return nil, err
 	}
 	driver := runner.NewCompose()
@@ -126,18 +136,22 @@ func runRebuild(e *env, args []string) (*report.Result, error) {
 	eco := fs.String("eco", "", "ecosystem the service belongs to")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
-	if err := fs.Parse(args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, "", set)
 	if err != nil {
 		return nil, err
 	}
+	if err := p.WriteEnvFile(); err != nil {
+		return nil, err
+	}
 	r := report.New("rebuild")
-	if err := runner.NewCompose().Build(context.Background(), p.Invocation(), fs.Args(), e.stderr, e.stderr); err != nil {
+	if err := runner.NewCompose().Build(context.Background(), p.Invocation(), services, e.stderr, e.stderr); err != nil {
 		r.Addf("RB-001", report.Error, p.Ecosystem, "the build failed: %v", err)
 	}
-	r.Data = &simpleData{Line: fmt.Sprintf("rebuilt %s", strings.Join(defaultTo(fs.Args(), []string{"every service"}), ", "))}
+	r.Data = &simpleData{Line: fmt.Sprintf("rebuilt %s", strings.Join(defaultTo(services, []string{"every service"}), ", "))}
 	return r, nil
 }
 
@@ -145,18 +159,24 @@ func runLogs(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("logs")
 	eco := fs.String("eco", "", "ecosystem to read logs from")
 	follow := fs.Bool("f", false, "follow the output")
-	if err := fs.Parse(args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, "", setFlag{})
 	if err != nil {
 		return nil, err
 	}
+	if err := p.WriteEnvFile(); err != nil {
+		return nil, err
+	}
 	r := report.New("logs")
-	if err := runner.NewCompose().Logs(context.Background(), p.Invocation(), fs.Args(), *follow, e.stdout, e.stderr); err != nil {
+	if err := runner.NewCompose().Logs(context.Background(), p.Invocation(), services, *follow, e.stdout, e.stderr); err != nil {
 		r.Addf("LG-001", report.Warning, p.Ecosystem, "the log stream ended: %v", err)
 	}
-	r.Data = nil
+	// logs writes the services' own output; a trailing "no findings" line
+	// would read as part of it.
+	r.Data = quietData{}
 	return r, nil
 }
 
@@ -166,11 +186,14 @@ func runPlan(e *env, args []string) (*report.Result, error) {
 	infra := fs.String("infra", "", "infrastructure profile: local, host or shared")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parse(fs, args); err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, *infra, set)
 	if err != nil {
+		return nil, err
+	}
+	if err := p.WriteEnvFile(); err != nil {
 		return nil, err
 	}
 	r := report.New("plan")
@@ -179,22 +202,43 @@ func runPlan(e *env, args []string) (*report.Result, error) {
 }
 
 type upData struct {
-	Plan    *plan.Plan `json:"plan"`
-	Started bool       `json:"started"`
-	Note    string     `json:"note,omitempty"`
+	Plan      *plan.Plan `json:"plan"`
+	Requested []string   `json:"requested,omitempty"`
+	Started   bool       `json:"started"`
+	Note      string     `json:"note,omitempty"`
 }
 
 func (d *upData) WriteHuman(w io.Writer) error {
-	if d.Started {
-		fmt.Fprintf(w, "%s is up (%d services, infra %s)\n\n", d.Plan.Project, len(d.Plan.Services), d.Plan.Infra)
-	} else {
-		fmt.Fprintf(w, "%s was not started\n\n", d.Plan.Project)
+	// Report what was asked for, never the size of the catalog: claiming
+	// four services are up when one container is running is a lie the reader
+	// has no way to catch.
+	what := "every service in the ecosystem"
+	if len(d.Requested) > 0 {
+		what = strings.Join(d.Requested, ", ")
 	}
-	writeServices(w, d.Plan)
+	if d.Started {
+		fmt.Fprintf(w, "%s: started %s (infra %s)\n\n", d.Plan.Project, what, d.Plan.Infra)
+	} else {
+		fmt.Fprintf(w, "%s: nothing started (%s was requested)\n\n", d.Plan.Project, what)
+	}
+	writeServices(w, d.Plan, d.Requested)
 	if d.Note != "" {
 		fmt.Fprintf(w, "\n%s\n", d.Note)
 	}
 	return nil
+}
+
+type quietData struct{}
+
+func (quietData) WriteHuman(io.Writer) error { return nil }
+
+func contains(list []string, v string) bool {
+	for _, item := range list {
+		if item == v {
+			return true
+		}
+	}
+	return false
 }
 
 type planData struct {
@@ -205,7 +249,7 @@ type planData struct {
 func (d *planData) WriteHuman(w io.Writer) error {
 	fmt.Fprintf(w, "ecosystem      %s\ninfrastructure %s\nproject        %s\nartifact       %s\n\n",
 		d.Plan.Ecosystem, d.Plan.Infra, d.Plan.Project, d.Plan.File)
-	writeServices(w, d.Plan)
+	writeServices(w, d.Plan, nil)
 	fmt.Fprintf(w, "\nby hand:\n  %s\n", d.Command)
 	return nil
 }
@@ -219,9 +263,16 @@ func (d *simpleData) WriteHuman(w io.Writer) error {
 	return err
 }
 
-func writeServices(w io.Writer, p *plan.Plan) {
+func writeServices(w io.Writer, p *plan.Plan, only []string) {
+	dirty := false
 	fmt.Fprintf(w, "%-16s %-14s %-16s %-9s %-7s %s\n", "SERVICE", "WORKTREE", "BRANCH", "COMMIT", "PORT", "CONTEXT")
 	for _, s := range p.Services {
+		if len(only) > 0 && !contains(only, s.Name) {
+			continue
+		}
+		if s.Dirty {
+			dirty = true
+		}
 		branch := s.Branch
 		if branch == "" {
 			branch = "-"
@@ -238,6 +289,9 @@ func writeServices(w io.Writer, p *plan.Plan) {
 			commit = "-"
 		}
 		fmt.Fprintf(w, "%-16s %-14s %-16s %-9s %-7s %s\n", s.Name, s.Worktree, branch, commit, port, s.Context)
+	}
+	if dirty {
+		fmt.Fprintln(w, "\n* uncommitted changes: what is built will not match any commit")
 	}
 }
 

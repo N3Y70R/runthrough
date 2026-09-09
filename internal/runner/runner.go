@@ -69,6 +69,9 @@ type Invocation struct {
 	// Env carries the resolved plan: worktree paths, ports, infrastructure
 	// endpoints and provenance labels.
 	Env map[string]string
+	// EnvFile holds the same values on disk, so the command the tool prints
+	// is the command a person can paste (principle 3).
+	EnvFile string
 }
 
 // UpOptions tunes bringing services up.
