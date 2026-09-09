@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/N3Y70R/runthrough/internal/catalog"
 	"github.com/N3Y70R/runthrough/internal/config"
 	"github.com/N3Y70R/runthrough/internal/doctor"
 	"github.com/N3Y70R/runthrough/internal/plan"
+	"github.com/N3Y70R/runthrough/internal/probe"
 	"github.com/N3Y70R/runthrough/internal/report"
 	"github.com/N3Y70R/runthrough/internal/runner"
 )
@@ -50,12 +52,31 @@ func loadPlan(e *env, eco, infra string, set setFlag) (*plan.Plan, *catalog.Cata
 	return p, cat, nil
 }
 
+// known rejects a service the ecosystem does not declare. Silently ignoring a
+// typo is worse than failing: the command reports success for something it
+// never did.
+func known(p *plan.Plan, names []string) error {
+	var bad []string
+	for _, n := range names {
+		if !contains(p.Names(), n) {
+			bad = append(bad, n)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf("no such service: %s (the ecosystem declares: %s)",
+		strings.Join(bad, ", "), strings.Join(p.Names(), ", "))
+}
+
 func runUp(e *env, args []string) (*report.Result, error) {
 	fs := e.flags("up")
 	eco := fs.String("eco", "", "ecosystem to bring up")
 	infra := fs.String("infra", "", "infrastructure profile: local, host or shared")
 	build := fs.Bool("build", false, "build images before starting")
 	skip := fs.Bool("skip-checks", false, "start without running the readiness checks first")
+	noWait := fs.Bool("no-wait", false, "return as soon as the containers are created, without waiting for them to answer")
+	waitFor := fs.Int("wait-timeout", 180, "seconds to wait for each service to answer")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
 	services, err := parse(fs, args)
@@ -67,12 +88,15 @@ func runUp(e *env, args []string) (*report.Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := known(p, services); err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	driver := runner.NewCompose()
 
 	r := report.New("up")
 	if !*skip {
-		checks := doctor.Run(ctx, doctor.Options{Catalog: cat, Ecosystem: p.Ecosystem, Services: services, Driver: driver})
+		checks := doctor.Run(ctx, doctor.Options{Catalog: cat, Ecosystem: p.Ecosystem, Services: services, Infra: p.Infra, Driver: driver})
 		for _, f := range checks.Findings {
 			r.Add(f)
 		}
@@ -104,7 +128,25 @@ func runUp(e *env, args []string) (*report.Result, error) {
 				Fixable: false,
 			})
 	}
-	r.Data = &upData{Plan: p, Requested: services, Started: err == nil}
+	data := &upData{Plan: p, Requested: services, Started: err == nil}
+	// A container that exists is not a service that answers. Waiting here is
+	// what makes a green result mean something.
+	if err == nil && !*noWait {
+		data.Ready = probe.Wait(ctx, p.WaitTargets(services), time.Duration(*waitFor)*time.Second)
+		for _, res := range data.Ready {
+			if res.Skipped || res.Ready {
+				continue
+			}
+			r.Fix("UP-003", report.Warning, p.Ecosystem+"/"+res.Service,
+				fmt.Sprintf("started, but did not answer at %s within %ds", res.Target, *waitFor),
+				report.Remediation{
+					Text:    "read its log to see whether it is still starting or actually broken",
+					Command: "runthrough logs " + res.Service,
+					Fixable: false,
+				})
+		}
+	}
+	r.Data = data
 	return r, nil
 }
 
@@ -147,11 +189,24 @@ func runRebuild(e *env, args []string) (*report.Result, error) {
 	if err := p.WriteEnvFile(); err != nil {
 		return nil, err
 	}
-	r := report.New("rebuild")
-	if err := runner.NewCompose().Build(context.Background(), p.Invocation(), services, e.stderr, e.stderr); err != nil {
-		r.Addf("RB-001", report.Error, p.Ecosystem, "the build failed: %v", err)
+	if err := known(p, services); err != nil {
+		return nil, err
 	}
-	r.Data = &simpleData{Line: fmt.Sprintf("rebuilt %s", strings.Join(defaultTo(services, []string{"every service"}), ", "))}
+	build, imageOnly := p.Buildable(services)
+	r := report.New("rebuild")
+	for _, name := range imageOnly {
+		r.Addf("RB-002", report.Warning, p.Ecosystem+"/"+name, "nothing to rebuild: this service runs a ready-made image, it has no source")
+	}
+	if len(build) == 0 {
+		r.Data = &simpleData{Line: "nothing was rebuilt: none of the requested services builds from source"}
+		return r, nil
+	}
+	if err := runner.NewCompose().Build(context.Background(), p.Invocation(), build, e.stderr, e.stderr); err != nil {
+		r.Addf("RB-001", report.Error, p.Ecosystem, "the build failed: %v", err)
+		r.Data = &simpleData{Line: "rebuild failed"}
+		return r, nil
+	}
+	r.Data = &simpleData{Line: "rebuilt " + strings.Join(build, ", ")}
 	return r, nil
 }
 
@@ -165,6 +220,9 @@ func runLogs(e *env, args []string) (*report.Result, error) {
 	}
 	p, _, err := loadPlan(e, *eco, "", setFlag{})
 	if err != nil {
+		return nil, err
+	}
+	if err := known(p, services); err != nil {
 		return nil, err
 	}
 	if err := p.WriteEnvFile(); err != nil {
@@ -186,26 +244,35 @@ func runPlan(e *env, args []string) (*report.Result, error) {
 	infra := fs.String("infra", "", "infrastructure profile: local, host or shared")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
-	if _, err := parse(fs, args); err != nil {
+	services, err := parse(fs, args)
+	if err != nil {
 		return nil, err
 	}
 	p, _, err := loadPlan(e, *eco, *infra, set)
 	if err != nil {
 		return nil, err
 	}
+	if err := known(p, services); err != nil {
+		return nil, err
+	}
 	if err := p.WriteEnvFile(); err != nil {
 		return nil, err
 	}
 	r := report.New("plan")
-	r.Data = &planData{Plan: p, Command: runner.NewCompose().Command(p.Invocation(), []string{"up", "--detach"})}
+	r.Data = &planData{
+		Plan:      p,
+		Requested: services,
+		Command:   runner.NewCompose().Command(p.Invocation(), append([]string{"up", "--detach"}, services...)),
+	}
 	return r, nil
 }
 
 type upData struct {
-	Plan      *plan.Plan `json:"plan"`
-	Requested []string   `json:"requested,omitempty"`
-	Started   bool       `json:"started"`
-	Note      string     `json:"note,omitempty"`
+	Plan      *plan.Plan     `json:"plan"`
+	Requested []string       `json:"requested,omitempty"`
+	Started   bool           `json:"started"`
+	Ready     []probe.Result `json:"readiness,omitempty"`
+	Note      string         `json:"note,omitempty"`
 }
 
 func (d *upData) WriteHuman(w io.Writer) error {
@@ -222,6 +289,24 @@ func (d *upData) WriteHuman(w io.Writer) error {
 		fmt.Fprintf(w, "%s: nothing started (%s was requested)\n\n", d.Plan.Project, what)
 	}
 	writeServices(w, d.Plan, d.Requested)
+	if len(d.Ready) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "%-16s %-8s %s\n", "SERVICE", "READY", "PROBE")
+		for _, res := range d.Ready {
+			state := "no"
+			switch {
+			case res.Skipped:
+				state = "-"
+			case res.Ready:
+				state = fmt.Sprintf("%ds", res.Seconds)
+			}
+			detail := res.Target
+			if res.Skipped {
+				detail = res.Detail
+			}
+			fmt.Fprintf(w, "%-16s %-8s %s\n", res.Service, state, detail)
+		}
+	}
 	if d.Note != "" {
 		fmt.Fprintf(w, "\n%s\n", d.Note)
 	}
@@ -242,14 +327,15 @@ func contains(list []string, v string) bool {
 }
 
 type planData struct {
-	Plan    *plan.Plan `json:"plan"`
-	Command string     `json:"command"`
+	Plan      *plan.Plan `json:"plan"`
+	Requested []string   `json:"requested,omitempty"`
+	Command   string     `json:"command"`
 }
 
 func (d *planData) WriteHuman(w io.Writer) error {
 	fmt.Fprintf(w, "ecosystem      %s\ninfrastructure %s\nproject        %s\nartifact       %s\n\n",
 		d.Plan.Ecosystem, d.Plan.Infra, d.Plan.Project, d.Plan.File)
-	writeServices(w, d.Plan, nil)
+	writeServices(w, d.Plan, d.Requested)
 	fmt.Fprintf(w, "\nby hand:\n  %s\n", d.Command)
 	return nil
 }

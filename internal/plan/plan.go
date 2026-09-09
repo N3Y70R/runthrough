@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/N3Y70R/runthrough/internal/catalog"
+	"github.com/N3Y70R/runthrough/internal/probe"
 	"github.com/N3Y70R/runthrough/internal/runner"
 	"github.com/N3Y70R/runthrough/internal/worktree"
 )
@@ -39,6 +40,8 @@ type Service struct {
 	Dirty    bool   `json:"dirty,omitempty"`
 	HostPort int    `json:"host_port,omitempty"`
 	Port     int    `json:"port,omitempty"`
+	Health   string `json:"health,omitempty"`
+	Path     string `json:"health_path,omitempty"`
 	Exists   bool   `json:"exists"`
 }
 
@@ -135,7 +138,8 @@ func Build(ctx context.Context, cat *catalog.Catalog, o Options) (*Plan, error) 
 		prefixEarly := "RT_" + envName(name)
 		if svc.Image != "" {
 			// No code, no worktree: a ready-made image only needs its ports.
-			s := Service{Name: name, Image: svc.Image, HostPort: svc.Port.Host, Port: svc.Port.Internal, Exists: true}
+			s := Service{Name: name, Image: svc.Image, HostPort: svc.Port.Host, Port: svc.Port.Internal,
+				Health: svc.Health.Type, Path: svc.Health.Path, Exists: true}
 			p.Services = append(p.Services, s)
 			p.Env[prefixEarly+"_IMAGE"] = svc.Image
 			if s.Port != 0 {
@@ -163,6 +167,8 @@ func Build(ctx context.Context, cat *catalog.Catalog, o Options) (*Plan, error) 
 			Dirty:    loc.Dirty,
 			HostPort: svc.Port.Host,
 			Port:     svc.Port.Internal,
+			Health:   svc.Health.Type,
+			Path:     svc.Health.Path,
 			Exists:   loc.Exists,
 		}
 		p.Services = append(p.Services, s)
@@ -230,6 +236,68 @@ func (p *Plan) WriteEnvFile() error {
 	}
 	p.EnvFile = path
 	return nil
+}
+
+// WaitTargets turns the plan into things to poll after starting. A service
+// with no published port cannot be reached from the host: that is a skip with
+// a reason, not a failure.
+func (p *Plan) WaitTargets(only []string) []probe.Target {
+	var out []probe.Target
+	for _, s := range p.Services {
+		if len(only) > 0 && !containsString(only, s.Name) {
+			continue
+		}
+		t := probe.Target{Service: s.Name, Kind: s.Health}
+		switch {
+		case s.HostPort == 0:
+			t.Skip = "no published port: not reachable from this machine"
+		case s.Health == "http":
+			path := s.Path
+			if path == "" {
+				path = "/"
+			}
+			t.URL = fmt.Sprintf("http://localhost:%d%s", s.HostPort, path)
+		default:
+			t.Kind = "tcp"
+			t.Address = fmt.Sprintf("localhost:%d", s.HostPort)
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// Names lists every service in the plan.
+func (p *Plan) Names() []string {
+	out := make([]string, 0, len(p.Services))
+	for _, s := range p.Services {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
+// Buildable splits names into those that build from source and those that
+// only pull an image.
+func (p *Plan) Buildable(names []string) (build, imageOnly []string) {
+	for _, s := range p.Services {
+		if len(names) > 0 && !containsString(names, s.Name) {
+			continue
+		}
+		if s.Image != "" {
+			imageOnly = append(imageOnly, s.Name)
+			continue
+		}
+		build = append(build, s.Name)
+	}
+	return build, imageOnly
+}
+
+func containsString(list []string, v string) bool {
+	for _, item := range list {
+		if item == v {
+			return true
+		}
+	}
+	return false
 }
 
 // Missing lists services whose code is not on disk. Starting without them is
