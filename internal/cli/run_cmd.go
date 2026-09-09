@@ -96,7 +96,15 @@ func runUp(e *env, args []string) (*report.Result, error) {
 
 	r := report.New("up")
 	if !*skip {
-		checks := doctor.Run(ctx, doctor.Options{Catalog: cat, Ecosystem: p.Ecosystem, Services: services, Infra: p.Infra, Driver: driver})
+		checks := doctor.Run(ctx, doctor.Options{
+			Catalog:   cat,
+			Ecosystem: p.Ecosystem,
+			Services:  services,
+			Infra:     p.Infra,
+			Artifact:  p.File,
+			Env:       p.Env,
+			Driver:    driver,
+		})
 		for _, f := range checks.Findings {
 			r.Add(f)
 		}

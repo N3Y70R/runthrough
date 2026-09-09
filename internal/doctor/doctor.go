@@ -35,8 +35,13 @@ type Options struct {
 	Services []string
 	// Infra is the profile whose endpoints get checked. Empty means the
 	// catalog's default.
-	Infra  string
-	Driver runner.Driver
+	Infra string
+	// Artifact and Env are the resolved driver artifact and the variables
+	// the tool would pass it. With them, doctor can verify the contract the
+	// artifact declares about itself — no catalog declaration needed.
+	Artifact string
+	Env      map[string]string
+	Driver   runner.Driver
 }
 
 func (o Options) wants(name string) bool {
@@ -62,6 +67,15 @@ type Data struct {
 	// Requirements records presence only: no value of any secret ever
 	// reaches this struct, the JSON output or the logs.
 	Requirements []RequirementReport `json:"requirements,omitempty"`
+	Artifact     *ArtifactReport     `json:"artifact,omitempty"`
+}
+
+// ArtifactReport is what the driver artifact needs and whether it has it.
+type ArtifactReport struct {
+	Path      string   `json:"path"`
+	Variables int      `json:"variables"`
+	Missing   []string `json:"missing,omitempty"`
+	EnvFiles  int      `json:"env_files"`
 }
 
 // InfraReport is one infrastructure component and whether it answers.
@@ -106,6 +120,7 @@ func Run(ctx context.Context, o Options) *report.Result {
 
 	env := newEnvSource(o.Catalog.Dir)
 	checkRequires(r, env, "catalog", o.Catalog.Requires, nil, data)
+	checkArtifact(r, o, data)
 
 	infraName := o.Infra
 	if infraName == "" {
