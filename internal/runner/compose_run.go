@@ -29,9 +29,13 @@ func (c *Compose) Down(ctx context.Context, inv Invocation, opts DownOptions, st
 	return c.run(ctx, inv, args, stdout, stderr)
 }
 
-// Stop stops named services without touching the rest of the stack.
+// Stop takes named services down without touching the rest of the stack.
+//
+// It stops AND removes them: "down" means the container is gone, and leaving
+// one behind in Exited state under the same verb is two meanings for one
+// word.
 func (c *Compose) Stop(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error {
-	return c.run(ctx, inv, append([]string{"stop"}, services...), stdout, stderr)
+	return c.run(ctx, inv, append([]string{"rm", "--stop", "--force", "--volumes"}, services...), stdout, stderr)
 }
 
 // Build rebuilds images without starting anything.

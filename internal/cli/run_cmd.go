@@ -235,11 +235,12 @@ func runRebuild(e *env, args []string) (*report.Result, error) {
 	eco := fs.String("eco", "", "ecosystem the service belongs to")
 	set := setFlag{}
 	fs.Var(set, "set", "pin a service to a branch, as service=branch (repeatable)")
+	skip := fs.Bool("skip-checks", false, "build without running the readiness checks first")
 	services, err := parse(fs, args)
 	if err != nil {
 		return nil, err
 	}
-	p, _, err := loadPlan(e, *eco, "", set)
+	p, cat, err := loadPlan(e, *eco, "", set)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +252,29 @@ func runRebuild(e *env, args []string) (*report.Result, error) {
 	}
 	build, imageOnly := p.Buildable(services)
 	r := report.New("rebuild")
+
+	// A build that will fail for a reason the checks already know about is a
+	// build not worth starting. up learned this two rounds ago; rebuild was
+	// still going in blind, and a missing build credential surfaced minutes
+	// into docker build instead of before it.
+	if !*skip && len(build) > 0 {
+		checks := doctor.Run(context.Background(), doctor.Options{
+			Catalog:   cat,
+			Ecosystem: p.Ecosystem,
+			Services:  build,
+			Infra:     p.Infra,
+			Artifact:  p.File,
+			Env:       p.Env,
+			Driver:    runner.NewCompose(),
+		})
+		for _, f := range checks.Findings {
+			r.Add(f)
+		}
+		if r.HasErrors() {
+			r.Data = &simpleData{Line: "nothing was built: the checks found errors. Fix them, or pass --skip-checks to build anyway"}
+			return r, nil
+		}
+	}
 	for _, name := range imageOnly {
 		r.Addf("RB-002", report.Warning, p.Ecosystem+"/"+name, "nothing to rebuild: this service runs a ready-made image, it has no source")
 	}
@@ -360,8 +384,11 @@ func (d *upData) WriteHuman(w io.Writer) error {
 				state = fmt.Sprintf("%ds", res.Seconds)
 			}
 			detail := res.Target
-			if res.Skipped || res.Unverifiable {
+			switch {
+			case res.Skipped, res.Unverifiable:
 				detail = res.Detail
+			case detail == "" && res.Kind == probe.KindContainer:
+				detail = "the container's own healthcheck"
 			}
 			fmt.Fprintf(w, "%-16s %-8s %s\n", res.Service, state, detail)
 		}
