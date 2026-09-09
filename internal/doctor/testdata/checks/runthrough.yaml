@@ -1,0 +1,39 @@
+# Fixture deliberadamente rota: cada defecto está puesto para que doctor lo
+# encuentre. La prueba dorada afirma el conjunto exacto de códigos.
+version: 1
+
+requires:
+  env:
+    - name: RT_TEST_ONLY_SERVICE_A
+      why: "solo la necesita el servicio a"
+      services: [service-a]
+  files:
+    - path: "{catalog}/no-existe.env"
+      why: "archivo declarado que no existe"
+
+ecosystems:
+  demo:
+    workspace: ./testdata/checks/no-such-workspace
+    default_worktree: main
+    compose: compose/demo.yml
+    port_range: [54320, 54340]
+    services:
+      service-a:
+        runtime: go
+        port: { internal: 8080, host: 54321 }
+        health: { type: http, path: /health }
+        needs: [postgres]
+
+      service-b:
+        runtime: node
+        port: { internal: 3000, host: 54322 }
+        # tcp sobre un puerto publicado: no puede fallar (RD-001)
+        health: { type: tcp }
+
+infra:
+  default: host
+  ports:
+    postgres: 54339
+  profiles:
+    host:
+      postgres: host

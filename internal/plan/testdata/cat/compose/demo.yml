@@ -1,0 +1,13 @@
+name: ${RT_PROJECT}
+services:
+  from-image:
+    image: node:22-alpine
+  builds-from-source:
+    build:
+      context: ${RT_BUILDS_FROM_SOURCE_CONTEXT}
+  with-healthcheck:
+    image: alpine
+    healthcheck:
+      test: ["CMD", "true"]
+  no-published-port:
+    image: alpine

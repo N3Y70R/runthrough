@@ -1,0 +1,33 @@
+version: 1
+ecosystems:
+  demo:
+    workspace: ./testdata/cat/workspace
+    default_worktree: main
+    compose: compose/demo.yml
+    services:
+      # el catálogo dice que tiene código; el artefacto dice que solo usa
+      # una imagen. Manda el artefacto.
+      from-image:
+        repo: some-repo
+        runtime: node
+        port: { internal: 3000, host: 53001 }
+        health: { type: http, path: /health }
+      builds-from-source:
+        repo: other-repo
+        runtime: go
+        port: { internal: 8080, host: 53002 }
+        health: { type: tcp }
+      with-healthcheck:
+        repo: third-repo
+        runtime: go
+        port: { internal: 8080, host: 53003 }
+        health: { type: tcp }
+      no-published-port:
+        repo: fourth-repo
+        runtime: php
+        port: { internal: 9000 }
+        health: { type: tcp }
+infra:
+  default: local
+  profiles:
+    local: { postgres: container }

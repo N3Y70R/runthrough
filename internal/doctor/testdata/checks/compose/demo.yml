@@ -1,0 +1,14 @@
+name: ${RT_PROJECT}
+services:
+  service-a:
+    image: alpine
+    # variable sin default y sin definir: AR-001
+    command: echo ${UNDEFINED_IN_THE_FIXTURE}
+    env_file:
+      - ./no-existe.env
+    volumes:
+      - ./gateway/present.conf:/etc/present.conf:ro
+  service-b:
+    image: alpine
+    volumes:
+      - ./gateway/ausente.conf:/etc/ausente.conf:ro
