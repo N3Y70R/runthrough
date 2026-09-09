@@ -72,6 +72,7 @@ anécdota.
 | D-7 | **Licencia GPL-3.0-or-later**, gobernanza por DCO sin cesión de copyright | 2026-09-09 |
 | D-8 | **El runtime de contenedores es un driver**: el dominio no conoce Compose. Docker/Compose es la primera implementación, Podman la segunda; Kubernetes queda fuera de v1 | 2026-09-09 |
 | D-9 | **El catálogo es un repositorio propio con forma de directorio**, localizado por una cadena de resolución explícita (ver §9) | 2026-09-09 |
+| D-10 | **Los archivos locales de cada servicio son declarativos y configurables** (origen, destino con ancla `repo:`/`worktree:`, modo `link`/`copy`). La herramienta los verifica siempre y los repara solo bajo `--fix`, dentro de tres reglas no configurables | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -152,7 +153,9 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 | ID | Funcionalidad | Prio |
 |---|---|---|
 | S-01 | `.env` del stack, `.env.example` versionado e interpolación de variables | M |
-| S-02 | Los archivos locales de cada repo (`.env`, Dockerfiles de desarrollo) viven fuera del árbol versionado y se enlazan donde la herramienta los busca | M |
+| S-02 | Los archivos locales de cada repo (`.env`, Dockerfiles de desarrollo) viven fuera del árbol versionado y se enlazan donde cada servicio los busca; origen y destino se declaran por servicio | M |
+| S-06 | `doctor --fix` crea los enlaces que falten, dentro de tres reglas no configurables: solo si el origen existe, nunca sobre un archivo existente, y solo en rutas ignoradas por git o fuera del árbol versionado | M |
+| S-07 | Modo `copy` como alternativa a `link` para herramientas o sistemas que no toleran enlaces simbólicos, avisando de que la copia se desincroniza del original | S |
 | S-03 | Regla `environment` > `env_file`, con overrides mínimos y comentados | M |
 | S-04 | `.gitignore` / `.dockerignore` de secretos y hook pre-commit de detección | M |
 | S-05 | Secretos compartidos coherentes entre servicios que deben coincidir | M |
@@ -361,13 +364,48 @@ infra:
 Cada servicio declara **qué necesita**, no **cómo se cablea**. El cableado —host, puerto,
 URL interna— lo resuelve la herramienta según el perfil activo.
 
+### Archivos locales por servicio
+
+Cada servicio necesita archivos que no se versionan: su `.env`, a veces un Dockerfile de
+desarrollo o un certificado. El original vive en un **almacén** fuera del árbol versionado
+—por defecto `{repo}/artifacts`, que es independiente de la rama— y la herramienta lo
+enlaza donde ese servicio lo busca, que **no es el mismo sitio para todos**: un micro cuyo
+build lee `../<repo>/.env` lo quiere a nivel de repositorio; un BFF que corre en modo host
+(N-06) lo lee desde su directorio de trabajo, dentro del worktree.
+
+Por eso el destino lleva un ancla explícita. `repo:` es la raíz del repositorio, estable
+entre ramas; `worktree:` es la rama activa, que cambia con el perfil.
+
+```yaml
+defaults:
+  local_files:
+    store: "{repo}/artifacts"      # dónde vive el original
+    mode: link                     # link | copy
+
+services:
+  orders-api:
+    local_files:
+      - { from: .env,             to: "repo:.env" }
+      - { from: Dockerfile.local, to: "worktree:Dockerfile.local" }
+  bff:
+    local_files:
+      - { from: .env, to: "worktree:.env", required: true }
+```
+
+Marcadores disponibles en rutas: `{repo}`, `{worktree}`, `{service}`, `{eco}`, `{home}`.
+
+`doctor` muestra el mapeo resuelto de cada servicio y qué falta. `doctor --fix` lo crea,
+pero **estas tres reglas no son configurables**: solo crea si el origen existe, nunca
+sobrescribe un archivo existente, y se niega si el destino no está ignorado por git o fuera
+del árbol versionado. Esa última es la que hace imposible que la herramienta provoque el
+commit de un `.env`.
+
 ## 10. Decisiones abiertas
 
 | # | Pregunta |
 |---|---|
 | A-1 | ¿Releases con binarios por plataforma (goreleaser) o solo `go install`? |
 | A-3 | ¿El snapshot es por ecosistema o global? ¿Se versiona junto al catálogo o queda fuera de git? |
-| A-4 | ¿La herramienta gestiona los archivos locales de cada repo o solo verifica que existan? |
 | A-5 | ¿Qué versión mínima de cada runtime se soporta? |
 | A-6 | Kubernetes: ¿el driver generaría manifiestos propios o delegaría en una herramienta de dev loop existente (Tilt, Skaffold, DevSpace)? |
 
