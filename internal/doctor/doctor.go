@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/N3Y70R/runthrough/internal/artifact"
 	"github.com/N3Y70R/runthrough/internal/catalog"
 	"github.com/N3Y70R/runthrough/internal/localfile"
 	"github.com/N3Y70R/runthrough/internal/probe"
@@ -182,7 +183,7 @@ func Run(ctx context.Context, o Options) *report.Result {
 			checkReadiness(r, contract, ecoName, svcName, svc)
 		}
 
-		checkInfra(r, o.Catalog, profile, infraName, components, data)
+		checkInfra(r, o.Catalog, contract, profile, infraName, components, data)
 		checkPorts(r, eco, scope, data)
 	}
 
@@ -248,7 +249,7 @@ func checkRuntime(r *report.Result, info runner.Info) {
 // checkInfra verifies the components a service declares it needs, instead of
 // assuming they are there. A stack whose database is not running starts
 // cleanly and fails on the first query — long after the diagnosis said so.
-func checkInfra(r *report.Result, cat *catalog.Catalog, profile map[string]string, profileName string, components []string, data *Data) {
+func checkInfra(r *report.Result, cat *catalog.Catalog, contract *artifact.Contract, profile map[string]string, profileName string, components []string, data *Data) {
 	for _, component := range components {
 		mode := profile[component]
 		rep := InfraReport{Component: component, Mode: mode}
@@ -285,7 +286,23 @@ func checkInfra(r *report.Result, cat *catalog.Catalog, profile map[string]strin
 					"%s accepts connections, but this build knows no handshake for %q: only the socket was verified", rep.Address, component)
 			}
 		case "container":
-			// The stack starts it; nothing to verify beforehand.
+			// "The stack starts it" is a claim, and claims get checked. A
+			// profile that promises a container the artifact never declares
+			// sends the reader away satisfied with nothing running — and it
+			// is the profile every IN-001 remediation points at.
+			if contract == nil {
+				break
+			}
+			if _, ok := contract.Service(component); ok {
+				rep.Reachable = true
+				break
+			}
+			r.Fix("IN-005", report.Error, component,
+				fmt.Sprintf("the %q profile says %s runs in a container, but the artifact declares no such service", profileName, component),
+				report.Remediation{
+					Text:    "add it to the artifact, or point the profile at where it really runs (host or remote)",
+					Fixable: false,
+				})
 		case "remote", "":
 			// Remote endpoints live in each service's own .env: the tool
 			// does not know them and must not guess.
@@ -546,8 +563,10 @@ func (d *Data) WriteHuman(w io.Writer) error {
 				state = "NOT speaking " + i.Protocol + " at " + i.Address
 			case i.Checked:
 				state = "NOT answering at " + i.Address
-			case i.Mode == "container":
+			case i.Mode == "container" && i.Reachable:
 				state = "started with the stack"
+			case i.Mode == "container":
+				state = "NOT declared in the artifact"
 			case i.Mode == "remote":
 				state = "remote, from the service's own .env"
 			}

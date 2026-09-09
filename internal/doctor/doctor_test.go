@@ -64,14 +64,45 @@ func load(t *testing.T) *catalog.Catalog {
 
 func run(t *testing.T, services ...string) *report.Result {
 	t.Helper()
+	return runWith(t, "", services...)
+}
+
+func runWith(t *testing.T, infra string, services ...string) *report.Result {
+	t.Helper()
 	cat := load(t)
 	return doctor.Run(context.Background(), doctor.Options{
 		Catalog:  cat,
 		Services: services,
+		Infra:    infra,
 		Artifact: cat.Resolve("compose/demo.yml"),
 		Env:      map[string]string{"RT_PROJECT": "rt-demo"},
 		Driver:   healthyDriver{},
 	})
+}
+
+// Every IN-001 tells the reader to switch to a profile that runs the
+// component in a container. That profile has to be checked too, or the advice
+// leads somewhere that reports success with nothing running.
+func TestAProfileCannotPromiseContainersTheArtifactLacks(t *testing.T) {
+	got := runWith(t, "local", "service-a")
+
+	var found bool
+	for _, f := range got.Findings {
+		if f.Code == "IN-005" {
+			found = true
+			if f.Severity != report.Error {
+				t.Errorf("a profile promising a service that does not exist is an error, got %s", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected IN-005 for a container the artifact never declares, got %v", codes(got))
+	}
+	// And the infrastructure it does declare must not be dialled: with the
+	// local profile nothing is expected on this machine.
+	if contains(codes(got), "IN-001") {
+		t.Error("a containerized component must not be probed on the host")
+	}
 }
 
 func codes(r *report.Result) []string {

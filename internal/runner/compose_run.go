@@ -35,7 +35,7 @@ func (c *Compose) Down(ctx context.Context, inv Invocation, opts DownOptions, st
 // one behind in Exited state under the same verb is two meanings for one
 // word.
 func (c *Compose) Stop(ctx context.Context, inv Invocation, services []string, stdout, stderr io.Writer) error {
-	return c.run(ctx, inv, append([]string{"rm", "--stop", "--force", "--volumes"}, services...), stdout, stderr)
+	return c.run(ctx, inv, append([]string{"rm", "--stop", "--force"}, services...), stdout, stderr)
 }
 
 // Build rebuilds images without starting anything.

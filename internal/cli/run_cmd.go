@@ -127,6 +127,19 @@ func runUp(e *env, args []string) (*report.Result, error) {
 	if err := p.WriteEnvFile(); err != nil {
 		return nil, err
 	}
+
+	// What was already up before this command ran. Without it, a service
+	// that was running reports "0s" — the same zero that meant a false
+	// promise two rounds ago.
+	already := map[string]bool{}
+	if states, err := driver.Status(ctx, p.Invocation()); err == nil {
+		for name, state := range states {
+			if state.State == "running" {
+				already[name] = true
+			}
+		}
+	}
+
 	err = driver.Up(ctx, p.Invocation(), runner.UpOptions{Services: services, Build: *build}, e.stdout, e.stderr)
 	if err != nil {
 		r.Fix("UP-002", report.Error, p.Ecosystem, fmt.Sprintf("the runtime refused to bring the stack up: %v", err),
@@ -136,7 +149,7 @@ func runUp(e *env, args []string) (*report.Result, error) {
 				Fixable: false,
 			})
 	}
-	data := &upData{Plan: p, Requested: services, Started: err == nil}
+	data := &upData{Plan: p, Requested: services, Started: err == nil, Already: already}
 	// A container that exists is not a service that answers. Waiting here is
 	// what makes a green result mean something.
 	if err == nil && !*noWait {
@@ -212,7 +225,7 @@ func runDown(e *env, args []string) (*report.Result, error) {
 		if err := driver.Stop(ctx, p.Invocation(), services, e.stderr, e.stderr); err != nil {
 			r.Addf("DN-001", report.Error, p.Ecosystem, "the runtime refused to stop %s: %v", strings.Join(services, ", "), err)
 		}
-		r.Data = &simpleData{Line: "stopped " + strings.Join(services, ", ")}
+		r.Data = &simpleData{Line: "removed " + strings.Join(services, ", ") + " (the rest of the stack is untouched)"}
 		return r, nil
 	}
 
@@ -310,7 +323,33 @@ func runLogs(e *env, args []string) (*report.Result, error) {
 		return nil, err
 	}
 	r := report.New("logs")
-	if err := runner.NewCompose().Logs(context.Background(), p.Invocation(), services, *follow, e.stdout, e.stderr); err != nil {
+	driver := runner.NewCompose()
+	ctx := context.Background()
+
+	// Silence has two meanings — a service that is not running, and one that
+	// is running and has not written anything — and they should not look the
+	// same. The rest of the tool learned to say "I cannot tell"; so does this.
+	if states, err := driver.Status(ctx, p.Invocation()); err == nil {
+		wanted := services
+		if len(wanted) == 0 {
+			wanted = p.Names()
+		}
+		for _, name := range wanted {
+			state, ok := states[name]
+			switch {
+			case !ok:
+				r.Fix("LG-002", report.Warning, p.Ecosystem+"/"+name,
+					"no container for this service: any silence below is absence, not quiet",
+					report.Remediation{Text: "start it first", Command: "runthrough up " + name, Fixable: false})
+			case state.State != "running":
+				r.Fix("LG-002", report.Warning, p.Ecosystem+"/"+name,
+					fmt.Sprintf("the container is %s, so its log ends where it stopped", state.State),
+					report.Remediation{Text: "start it again to see more", Command: "runthrough up " + name, Fixable: false})
+			}
+		}
+	}
+
+	if err := driver.Logs(ctx, p.Invocation(), services, *follow, e.stdout, e.stderr); err != nil {
 		r.Addf("LG-001", report.Warning, p.Ecosystem, "the log stream ended: %v", err)
 	}
 	// logs writes the services' own output; a trailing "no findings" line
@@ -349,11 +388,12 @@ func runPlan(e *env, args []string) (*report.Result, error) {
 }
 
 type upData struct {
-	Plan      *plan.Plan     `json:"plan"`
-	Requested []string       `json:"requested,omitempty"`
-	Started   bool           `json:"started"`
-	Ready     []probe.Result `json:"readiness,omitempty"`
-	Note      string         `json:"note,omitempty"`
+	Plan      *plan.Plan      `json:"plan"`
+	Requested []string        `json:"requested,omitempty"`
+	Already   map[string]bool `json:"already_running,omitempty"`
+	Started   bool            `json:"started"`
+	Ready     []probe.Result  `json:"readiness,omitempty"`
+	Note      string          `json:"note,omitempty"`
 }
 
 func (d *upData) WriteHuman(w io.Writer) error {
@@ -380,6 +420,8 @@ func (d *upData) WriteHuman(w io.Writer) error {
 				state = "-"
 			case res.Unverifiable:
 				state = "unknown"
+			case res.Ready && d.Already[res.Service]:
+				state = "already"
 			case res.Ready:
 				state = fmt.Sprintf("%ds", res.Seconds)
 			}

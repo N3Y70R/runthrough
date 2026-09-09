@@ -37,3 +37,6 @@ infra:
   profiles:
     host:
       postgres: host
+    # promete un contenedor que compose/demo.yml no declara
+    local:
+      postgres: container
