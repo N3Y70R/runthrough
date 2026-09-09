@@ -38,6 +38,17 @@ breaks, nobody can say whether it was the change or the environment.
 It is the sibling of [grove](https://github.com/neytor/grove): grove manages the *code*
 (one worktree per branch), `runthrough` manages its *execution*.
 
+## Requirements
+
+- **Docker Engine 24+ with Compose v2.20+**, or a compatible runtime. The floor comes from
+  `include:`, which the multi-ecosystem catalog relies on, and from BuildKit being the
+  default builder. A Podman driver is planned and will start out experimental.
+- **Go**: the project builds with the two most recent stable releases.
+
+`runthrough doctor` checks more than version numbers: it probes the capabilities the
+catalog actually needs, so an unsupported runtime fails early and clearly instead of
+half-starting the stack.
+
 ## Documentation
 
 - [`docs/00-spec.md`](docs/00-spec.md) — functional specification: capability catalog,

@@ -74,6 +74,7 @@ anécdota.
 | D-9 | **El catálogo es un repositorio propio con forma de directorio**, localizado por una cadena de resolución explícita (ver §9) | 2026-09-09 |
 | D-10 | **Los archivos locales de cada servicio son declarativos y configurables** (origen, destino con ancla `repo:`/`worktree:`, modo `link`/`copy`). La herramienta los verifica siempre y los repara solo bajo `--fix`, dentro de tres reglas no configurables | 2026-09-09 |
 | D-11 | **Baseline (código, versionado) y snapshot (captura binaria, local) son conceptos distintos.** Los snapshots son por ecosistema, viven fuera de git en ruta configurable y guardan metadatos de procedencia | 2026-09-09 |
+| D-12 | **Piso de soporte declarado y verificado por capacidades**: Docker Compose ≥ 2.20 y Engine ≥ 24, Podman experimental, y el proyecto se compila con las dos últimas versiones estables de Go | 2026-09-09 |
 
 ## 5. Catálogo de funcionalidades
 
@@ -203,7 +204,7 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 | T-05 | Catálogo declarativo como única fuente de verdad | M |
 | T-06 | Escape hatch: el compose sigue siendo ejecutable a mano | M |
 | T-07 | Configuración de usuario en `~/.config/runthrough/` | M |
-| T-08 | `doctor` valida versiones del runtime y coherencia del catálogo | S |
+| T-08 | `doctor` valida el runtime —versión y capacidades reales— y la coherencia del catálogo | S |
 | T-09 | Cadena de resolución del catálogo, y `config show` que dice cuál se resolvió y por qué vía | M |
 
 ### Bloque 11 — Runtime intercambiable
@@ -220,6 +221,15 @@ Prioridad: **M** = imprescindible para v1 · **S** = deseable en v1.x · **C** =
 > R-02 y R-05 no cuestan nada hoy y son lo único que hace posible un segundo runtime
 > mañana. R-03 es lo que evita la peor forma de fallo: un stack que arranca a medias porque
 > el driver no soporta algo que el catálogo daba por hecho.
+>
+> **Piso declarado, verificación por capacidades.** El piso es **Docker Compose 2.20 y
+> Engine 24**: el mínimo que soporta `include:`, del que depende el catálogo
+> multi-ecosistema, y donde BuildKit —necesario para el build por SSH (B-01)— ya viene por
+> defecto. Pero `doctor` no se conforma con el número de versión: comprueba las capacidades
+> concretas, porque Docker Desktop, Colima, Rancher Desktop y OrbStack reportan versiones
+> distintas y soportan cosas distintas. El driver de Podman nace marcado como
+> **experimental** hasta estar ejercitado. La herramienta se compila con las **dos últimas
+> versiones estables de Go**, la misma política del propio proyecto Go.
 
 ## 6. Arquitectura
 
@@ -420,7 +430,6 @@ commit de un `.env`.
 | # | Pregunta |
 |---|---|
 | A-1 | ¿Releases con binarios por plataforma (goreleaser) o solo `go install`? |
-| A-5 | ¿Qué versión mínima de cada runtime se soporta? |
 | A-6 | Kubernetes: ¿el driver generaría manifiestos propios o delegaría en una herramienta de dev loop existente (Tilt, Skaffold, DevSpace)? |
 
 ## 11. Roadmap
