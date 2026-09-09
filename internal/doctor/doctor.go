@@ -19,6 +19,7 @@ import (
 
 	"github.com/N3Y70R/runthrough/internal/catalog"
 	"github.com/N3Y70R/runthrough/internal/localfile"
+	"github.com/N3Y70R/runthrough/internal/probe"
 	"github.com/N3Y70R/runthrough/internal/report"
 	"github.com/N3Y70R/runthrough/internal/runner"
 	"github.com/N3Y70R/runthrough/internal/worktree"
@@ -32,7 +33,10 @@ type Options struct {
 	// and being blocked by another one's problem defeats the purpose of
 	// checking a slice of the stack at a time.
 	Services []string
-	Driver   runner.Driver
+	// Infra is the profile whose endpoints get checked. Empty means the
+	// catalog's default.
+	Infra  string
+	Driver runner.Driver
 }
 
 func (o Options) wants(name string) bool {
@@ -50,8 +54,27 @@ func (o Options) wants(name string) bool {
 // Data is the structured outcome, and the human view of a run.
 type Data struct {
 	Manifest string          `json:"manifest"`
+	Infra    string          `json:"infra"`
 	Runtime  runner.Info     `json:"runtime"`
 	Services []ServiceReport `json:"services"`
+	Infras   []InfraReport   `json:"infrastructure,omitempty"`
+	Ports    []PortReport    `json:"ports,omitempty"`
+}
+
+// InfraReport is one infrastructure component and whether it answers.
+type InfraReport struct {
+	Component string `json:"component"`
+	Mode      string `json:"mode"`
+	Address   string `json:"address,omitempty"`
+	Reachable bool   `json:"reachable"`
+	Checked   bool   `json:"checked"`
+}
+
+// PortReport is one host port the ecosystem intends to publish.
+type PortReport struct {
+	Service string `json:"service"`
+	Port    int    `json:"port"`
+	Taken   bool   `json:"taken"`
 }
 
 // ServiceReport is what was found for one service.
@@ -78,18 +101,43 @@ func Run(ctx context.Context, o Options) *report.Result {
 	data.Runtime = o.Driver.Probe(ctx)
 	checkRuntime(r, data.Runtime)
 
+	infraName := o.Infra
+	if infraName == "" {
+		infraName = o.Catalog.Infra.Default
+	}
+	if infraName == "" {
+		infraName = "local"
+	}
+	data.Infra = infraName
+	profile := o.Catalog.Infra.Profiles[infraName]
+	known := o.Catalog.Infra.Components()
+
 	for _, ecoName := range sortedEcosystems(o.Catalog) {
 		if o.Ecosystem != "" && o.Ecosystem != ecoName {
 			continue
 		}
 		eco := o.Catalog.Ecosystems[ecoName]
-		for _, svcName := range sortedServices(eco) {
-			if !o.wants(svcName) {
-				continue
-			}
+
+		// Asking about a service means asking about everything it stands
+		// on: checking only the literal names produces a clean diagnosis
+		// followed by a failed start.
+		names := o.Services
+		if len(names) == 0 {
+			names = eco.AllServices()
+		}
+		scope, components, unknown := eco.Closure(names, known)
+		for _, name := range unknown {
+			r.Fix("CFG-001", report.Error, ecoName, fmt.Sprintf("no service %q in this ecosystem", name),
+				report.Remediation{Text: "the ecosystem declares: " + strings.Join(eco.AllServices(), ", "), Fixable: false})
+		}
+
+		for _, svcName := range scope {
 			svc := eco.Services[svcName]
 			data.Services = append(data.Services, checkService(ctx, r, o.Catalog, eco, svc))
 		}
+
+		checkInfra(r, o.Catalog, profile, infraName, components, data)
+		checkPorts(r, eco, scope, data)
 	}
 
 	r.Data = data
@@ -148,6 +196,69 @@ func checkRuntime(r *report.Result, info runner.Info) {
 	}
 	if info.Experimental {
 		r.Addf("RT-007", report.Warning, info.Driver, "this driver is experimental and has not been exercised in anger")
+	}
+}
+
+// checkInfra verifies the components a service declares it needs, instead of
+// assuming they are there. A stack whose database is not running starts
+// cleanly and fails on the first query — long after the diagnosis said so.
+func checkInfra(r *report.Result, cat *catalog.Catalog, profile map[string]string, profileName string, components []string, data *Data) {
+	for _, component := range components {
+		mode := profile[component]
+		rep := InfraReport{Component: component, Mode: mode}
+		switch mode {
+		case "host":
+			port := cat.Infra.PortOf(component)
+			if port == 0 {
+				r.Fix("IN-002", report.Warning, component, "no port known for this component, so it cannot be checked",
+					report.Remediation{Text: "declare it under infra.ports in the catalog", Fixable: false})
+				data.Infras = append(data.Infras, rep)
+				continue
+			}
+			rep.Checked = true
+			rep.Address = fmt.Sprintf("127.0.0.1:%d", port)
+			if err := probe.Reachable("127.0.0.1", port); err != nil {
+				r.Fix("IN-001", report.Error, component,
+					fmt.Sprintf("nothing is listening on %s, but the %q profile expects it on this machine", rep.Address, profileName),
+					report.Remediation{Text: "start it on your machine, or switch to a profile that runs it in a container (--infra local)", Fixable: false})
+			} else {
+				rep.Reachable = true
+			}
+		case "container":
+			// The stack starts it; nothing to verify beforehand.
+		case "remote", "":
+			// Remote endpoints live in each service's own .env: the tool
+			// does not know them and must not guess.
+		}
+		data.Infras = append(data.Infras, rep)
+	}
+}
+
+// checkPorts reports host ports that are already taken, before a build that
+// takes minutes ends in a collision.
+func checkPorts(r *report.Result, eco *catalog.Ecosystem, scope []string, data *Data) {
+	seen := map[int]bool{}
+	check := func(name string, port int) {
+		if port == 0 || seen[port] {
+			return
+		}
+		seen[port] = true
+		taken, family := probe.PortTaken(port)
+		data.Ports = append(data.Ports, PortReport{Service: name, Port: port, Taken: taken})
+		if !taken {
+			return
+		}
+		r.Fix("PT-001", report.Warning, eco.Name+"/"+name,
+			fmt.Sprintf("host port %d is already in use (%s)", port, family),
+			report.Remediation{Text: "free the port, or change it in the catalog — if this stack is already running, this is expected", Fixable: false})
+	}
+	for _, name := range scope {
+		if svc, ok := eco.Services[name]; ok {
+			check(name, svc.Port.Host)
+		}
+	}
+	if eco.Gateway != nil {
+		check("gateway", eco.Gateway.Port)
 	}
 }
 
@@ -304,6 +415,9 @@ func (d *Data) WriteHuman(w io.Writer) error {
 		status = "ready"
 	}
 	fmt.Fprintf(w, "runtime        %s (%s)\n", rt.Driver, status)
+	if d.Infra != "" {
+		fmt.Fprintf(w, "infra profile  %s\n", d.Infra)
+	}
 	if rt.Client != "" {
 		fmt.Fprintf(w, "versions       client %s, engine %s, compose %s\n", dash(rt.Client), dash(rt.Engine), dash(rt.Compose))
 	}
@@ -341,6 +455,30 @@ func (d *Data) WriteHuman(w io.Writer) error {
 			dash(s.Location.Commit),
 			filesSummary(s.LocalFiles),
 		)
+	}
+	for _, s := range d.Services {
+		if s.Location.Dirty {
+			fmt.Fprintln(w, "\n* uncommitted changes: what is built will not match any commit")
+			break
+		}
+	}
+	if len(d.Infras) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "%-14s %-10s %s\n", "COMPONENT", "MODE", "STATE")
+		for _, i := range d.Infras {
+			state := "not checked"
+			switch {
+			case i.Checked && i.Reachable:
+				state = "answering at " + i.Address
+			case i.Checked:
+				state = "NOT answering at " + i.Address
+			case i.Mode == "container":
+				state = "started with the stack"
+			case i.Mode == "remote":
+				state = "remote, from the service's own .env"
+			}
+			fmt.Fprintf(w, "%-14s %-10s %s\n", i.Component, dash(i.Mode), state)
+		}
 	}
 	return nil
 }

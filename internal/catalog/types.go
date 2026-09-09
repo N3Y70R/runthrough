@@ -109,7 +109,11 @@ type Infra struct {
 	// Default is the profile used when a command does not name one. A
 	// catalog whose services expect the machine's own Postgres should not
 	// need everyone to remember a flag.
-	Default  string                       `yaml:"default"`
+	Default string `yaml:"default"`
+	// Ports says where a component listens when the profile puts it on the
+	// developer's machine. Well-known components have defaults, so this is
+	// only for the unusual ones.
+	Ports    map[string]int               `yaml:"ports"`
 	Profiles map[string]map[string]string `yaml:"profiles"`
 }
 
