@@ -213,6 +213,41 @@ func TestEveryFindingCarriesARemediation(t *testing.T) {
 	}
 }
 
+// A mistyped identifier must never come back as a clean diagnosis: an empty
+// green report is indistinguishable from a healthy stack.
+func TestUnknownEcosystemIsRejectedAndNamesTheAlternatives(t *testing.T) {
+	got := doctor.Run(context.Background(), doctor.Options{
+		Catalog:   load(t),
+		Ecosystem: "no-such-eco",
+		Driver:    healthyDriver{},
+	})
+	if !got.HasErrors() {
+		t.Fatalf("an unknown ecosystem must fail, got status %q", got.Status)
+	}
+	var found bool
+	for _, f := range got.Findings {
+		if f.Code == "CFG-002" {
+			found = true
+			if !strings.Contains(f.Message, "demo") {
+				t.Errorf("the message must list the ecosystems that do exist, got %q", f.Message)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected CFG-002, got %v", codes(got))
+	}
+}
+
+func TestUnknownInfraProfileIsRejected(t *testing.T) {
+	got := runWith(t, "no-such-profile")
+	if !contains(codes(got), "CFG-003") {
+		t.Errorf("expected CFG-003 for a profile the catalog does not declare, got %v", codes(got))
+	}
+	if !got.HasErrors() {
+		t.Error("naming a profile that does not exist must fail")
+	}
+}
+
 func contains(list []string, v string) bool {
 	for _, item := range list {
 		if item == v {

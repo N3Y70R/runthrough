@@ -135,6 +135,20 @@ func Run(ctx context.Context, o Options) *report.Result {
 	env := newEnvSource(o.Catalog.Dir)
 	contract := readContract(r, o, data)
 
+	// An identifier that does not exist must be said out loud. A diagnosis
+	// that comes back empty and green is indistinguishable from a healthy
+	// stack, which is the one failure mode this tool treats as serious: a
+	// mistyped --eco turned six real errors into a clean bill of health.
+	if o.Ecosystem != "" {
+		if _, ok := o.Catalog.Ecosystems[o.Ecosystem]; !ok {
+			r.Fix("CFG-002", report.Error, "",
+				fmt.Sprintf("no ecosystem %q in this catalog (it declares: %s)", o.Ecosystem, strings.Join(ecosystemNames(o.Catalog), ", ")),
+				report.Remediation{Text: "check the name against the list above", Fixable: false})
+			r.Data = data
+			return r
+		}
+	}
+
 	infraName := o.Infra
 	if infraName == "" {
 		infraName = o.Catalog.Infra.Default
@@ -143,7 +157,12 @@ func Run(ctx context.Context, o Options) *report.Result {
 		infraName = "local"
 	}
 	data.Infra = infraName
-	profile := o.Catalog.Infra.Profiles[infraName]
+	profile, profileExists := o.Catalog.Infra.Profiles[infraName]
+	if !profileExists && len(o.Catalog.Infra.Profiles) > 0 {
+		r.Fix("CFG-003", report.Error, "",
+			fmt.Sprintf("no infrastructure profile %q (the catalog declares: %s)", infraName, strings.Join(profileNames(o.Catalog), ", ")),
+			report.Remediation{Text: "name one of those, or leave --infra out to use the catalog's default", Fixable: false})
+	}
 	known := o.Catalog.Infra.Components()
 
 	for _, ecoName := range sortedEcosystems(o.Catalog) {
@@ -471,6 +490,27 @@ func reasonOr(i runner.Info, fallback string) string {
 func dirExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && info.IsDir()
+}
+
+// ecosystemNames and profileNames exist so that a rejection can name the
+// alternatives: being told a name is wrong without being told the right ones
+// is half an answer.
+func ecosystemNames(c *catalog.Catalog) []string {
+	out := make([]string, 0, len(c.Ecosystems))
+	for name := range c.Ecosystems {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func profileNames(c *catalog.Catalog) []string {
+	out := make([]string, 0, len(c.Infra.Profiles))
+	for name := range c.Infra.Profiles {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func sortedEcosystems(c *catalog.Catalog) []string {
