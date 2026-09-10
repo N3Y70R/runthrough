@@ -59,6 +59,18 @@ func commands() []command {
 			run:     runRebuild,
 		},
 		{
+			name:    "status",
+			summary: "show what is running, and which commit it came from",
+			usage:   "runthrough status [SERVICE...] [--eco NAME] [--json]",
+			run:     runStatus,
+		},
+		{
+			name:    "probe",
+			summary: "ask one service whether it answers",
+			usage:   "runthrough probe SERVICE... | --all [--timeout N]",
+			run:     runProbe,
+		},
+		{
 			name:    "logs",
 			summary: "read service output",
 			usage:   "runthrough logs [SERVICE...] [-f] [--eco NAME]",

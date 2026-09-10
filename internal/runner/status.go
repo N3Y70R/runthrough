@@ -14,7 +14,30 @@ type ServiceState struct {
 	Name   string `json:"Service"`
 	State  string `json:"State"`
 	Health string `json:"Health"`
+	// Labels carries what was stamped on the image when it was built. It is
+	// how a running container can be traced back to the commit it came from,
+	// which is the difference between a stack you can measure and one you
+	// can only look at.
+	Labels string `json:"Labels"`
 }
+
+// Label reads one stamped value.
+func (s ServiceState) Label(name string) string {
+	for _, pair := range strings.Split(s.Labels, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && key == name {
+			return value
+		}
+	}
+	return ""
+}
+
+// Provenance labels, written by the artifact from the resolved plan.
+const (
+	LabelRepo   = "org.runthrough.repo"
+	LabelBranch = "org.runthrough.branch"
+	LabelCommit = "org.runthrough.commit"
+)
 
 // Status asks the runtime what is running. The runtime's own healthcheck is
 // the only trustworthy readiness signal: it runs inside the container, so it
